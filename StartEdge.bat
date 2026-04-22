@@ -1,0 +1,3 @@
+@echo off
+echo Starting Edge with debugging port...
+"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" --remote-debugging-port=9222 --remote-allow-origins=* --user-data-dir=%TEMP%\edge-fishing
