@@ -51,10 +51,11 @@ PREVIEW_WINDOW_NAME = "Fishing Preview"
 
 CAPTURE_REGION = {"x": 0, "y": 0, "width": 355, "height": 159}
 
-FLOAT_MARK_RADIUS = 15
 FISH_TRACK_RADIUS = 90
-BITE_TRIGGER_RADIUS = 30
-FLOAT_EXCLUDE_RADIUS = FLOAT_MARK_RADIUS + 3
+FLOAT_BOX_PADDING = 2
+FLOAT_BOX_MIN_SIZE = 14
+FLOAT_BOX_MAX_SIZE = 70
+FLOAT_BOX_TRIGGER_THICKNESS = 5
 FLOAT_MIN_AREA = 50
 FISH_MIN_AREA = 25
 FISH_BRIGHTNESS_DROP = 12
@@ -184,8 +185,62 @@ def random_delay(a, b):
     return random.uniform(a, b)
 
 
+def gaussian_delay(a, b):
+    center = (a + b) / 2
+    sigma = (b - a) / 6
+    return clamp(random.gauss(center, sigma), a, b)
+
+
 def clamp(v, lo, hi):
     return max(lo, min(v, hi))
+
+
+def _clip_box(box, width, height):
+    l, t, r, b = box
+    l = int(clamp(l, 0, width))
+    t = int(clamp(t, 0, height))
+    r = int(clamp(r, 0, width))
+    b = int(clamp(b, 0, height))
+    if r < l:
+        r = l
+    if b < t:
+        b = t
+    return l, t, r, b
+
+
+def _square_box_from_center(center, side, width, height):
+    cx, cy = center
+    side = int(round(clamp(side, 1, max(width, height))))
+    l = int(round(cx - side / 2))
+    t = int(round(cy - side / 2))
+    r = l + side
+    b = t + side
+
+    if l < 0:
+        r -= l
+        l = 0
+    if t < 0:
+        b -= t
+        t = 0
+    if r > width:
+        l -= r - width
+        r = width
+    if b > height:
+        t -= b - height
+        b = height
+    return _clip_box((l, t, r, b), width, height)
+
+
+def _offset_box(box, dx, dy, width, height):
+    l, t, r, b = box
+    return _clip_box((l - dx, t - dy, r - dx, b - dy), width, height)
+
+
+def _draw_box_border(target, box, color, thickness):
+    l, t, r, b = box
+    if r - l <= 1 or b - t <= 1:
+        return
+    cv2.rectangle(target, (l, t), (r - 1, b - 1), color, thickness)
 
 
 def get_window_text(hwnd):
@@ -1000,6 +1055,7 @@ def _switch_to_rod_slot(slot, reason=""):
     CURRENT_ROD_SLOT = slot
     suffix = f"（{reason}）" if reason else ""
     print(f"[鱼竿] 已切换到快捷栏 {slot}{suffix}")
+    time.sleep(random_delay(0.3, 0.4))
     return True
 
 
@@ -1022,9 +1078,11 @@ def ensure_usable_rod(reason=""):
             CURRENT_ROD_SLOT = inferred_slot
 
     if CURRENT_ROD_SLOT is None:
-        if _ordered_available_rod_slots(slots):
+        available = _ordered_available_rod_slots(slots)
+        if available:
+            switched = _switch_to_rod_slot(available[0], reason=reason or "确认可用鱼竿")
             LAST_ROD_SLOTS = snapshot
-            return True
+            return switched
         print("[鱼竿] 快捷栏 1-5 没有可用鱼竿，自动暂停")
         running = False
         paused = True
@@ -1152,19 +1210,34 @@ listener = keyboard.Listener(on_press=on_press)
 listener.start()
 
 
-# ---------- 识别（不变） ----------
-def find_float_center(frame, red_lower, red_upper):
+# ---------- 识别 ----------
+def find_float_target(frame, red_lower, red_upper):
     red_mask = cv2.inRange(frame, red_lower, red_upper)
     contours, _ = cv2.findContours(red_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
         return None
     contour = max(contours, key=cv2.contourArea)
-    if cv2.contourArea(contour) < FLOAT_MIN_AREA:
+    area = cv2.contourArea(contour)
+    if area < FLOAT_MIN_AREA:
         return None
     m = cv2.moments(contour)
     if m["m00"] == 0:
         return None
-    return int(m["m10"] / m["m00"]), int(m["m01"] / m["m00"])
+    center = int(m["m10"] / m["m00"]), int(m["m01"] / m["m00"])
+    x, y, w, h = cv2.boundingRect(contour)
+    side = max(w, h) + FLOAT_BOX_PADDING * 2
+    side = clamp(side, FLOAT_BOX_MIN_SIZE, FLOAT_BOX_MAX_SIZE)
+    return {
+        "center": center,
+        "box": _square_box_from_center(center, side, frame.shape[1], frame.shape[0]),
+        "red_bbox": (x, y, x + w, y + h),
+        "area": area,
+    }
+
+
+def find_float_center(frame, red_lower, red_upper):
+    target = find_float_target(frame, red_lower, red_upper)
+    return target["center"] if target is not None else None
 
 
 def build_shadow_mask(roi, float_center_local, track_radius, red_lower, red_upper):
@@ -1179,7 +1252,6 @@ def build_shadow_mask(roi, float_center_local, track_radius, red_lower, red_uppe
 
     ring = np.zeros_like(dark)
     cv2.circle(ring, float_center_local, track_radius, 255, -1)
-    cv2.circle(ring, float_center_local, FLOAT_EXCLUDE_RADIUS, 0, -1)
     dark = cv2.bitwise_and(dark, ring)
 
     kernel = np.ones((3, 3), np.uint8)
@@ -1188,18 +1260,18 @@ def build_shadow_mask(roi, float_center_local, track_radius, red_lower, red_uppe
     return dark, threshold
 
 
-def contour_overlaps_bite_zone(contour, mask_shape, float_center_local):
+def contour_overlaps_bite_box(contour, mask_shape, trigger_box_local):
     trigger = np.zeros(mask_shape, dtype=np.uint8)
     cmask = np.zeros(mask_shape, dtype=np.uint8)
-    cv2.circle(trigger, float_center_local, BITE_TRIGGER_RADIUS, 255, -1)
-    cv2.circle(trigger, float_center_local, FLOAT_EXCLUDE_RADIUS, 0, -1)
+    _draw_box_border(trigger, trigger_box_local, 255, FLOAT_BOX_TRIGGER_THICKNESS)
     cv2.drawContours(cmask, [contour], -1, 255, -1)
     return cv2.countNonZero(cv2.bitwise_and(trigger, cmask)) > 0
 
 
-def find_fish_shadow(frame, float_center, red_lower, red_upper):
-    if float_center is None:
+def find_fish_shadow(frame, float_target, red_lower, red_upper):
+    if float_target is None:
         return None
+    float_center = float_target["center"]
     cx, cy = float_center
     left = max(cx - FISH_TRACK_RADIUS, 0)
     top = max(cy - FISH_TRACK_RADIUS, 0)
@@ -1212,9 +1284,10 @@ def find_fish_shadow(frame, float_center, red_lower, red_upper):
     local = (cx - left, cy - top)
     track_r = min(FISH_TRACK_RADIUS, local[0], local[1],
                   roi.shape[1] - local[0] - 1, roi.shape[0] - local[1] - 1)
-    if track_r <= BITE_TRIGGER_RADIUS:
+    if track_r <= FLOAT_BOX_TRIGGER_THICKNESS:
         return None
 
+    trigger_box_local = _offset_box(float_target["box"], left, top, roi.shape[1], roi.shape[0])
     mask, threshold = build_shadow_mask(roi, local, track_r, red_lower, red_upper)
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -1224,7 +1297,7 @@ def find_fish_shadow(frame, float_center, red_lower, red_upper):
         area = cv2.contourArea(c)
         if area < FISH_MIN_AREA:
             continue
-        hit = contour_overlaps_bite_zone(c, mask.shape, local)
+        hit = contour_overlaps_bite_box(c, mask.shape, trigger_box_local)
         item = {"contour_local": c, "area": area, "bite_triggered": hit}
         candidates.append(item)
         if hit:
@@ -1242,6 +1315,7 @@ def find_fish_shadow(frame, float_center, red_lower, red_upper):
         "area": sel["area"],
         "bite_triggered": sel["bite_triggered"],
         "brightness_threshold": threshold,
+        "float_box": float_target["box"],
     }
 
 
@@ -1316,8 +1390,8 @@ def show_selection_preview():
     cv2.waitKey(1)
 
 
-def build_status_text(float_center, fs):
-    if float_center is None:
+def build_status_text(float_target, fs):
+    if float_target is None:
         return "FLOAT: missing | FISH: missing"
     if fs is None:
         return "FLOAT: tracked | FISH: missing"
@@ -1326,17 +1400,12 @@ def build_status_text(float_center, fs):
     return f"FLOAT: tracked | FISH: tracked area={int(fs['area'])}"
 
 
-def show_fishing_preview(frame, float_center, fs):
+def show_fishing_preview(frame, float_target, fs):
     preview = frame.copy()
-    if float_center is not None:
-        cx, cy = float_center
+    if float_target is not None:
+        cx, cy = float_target["center"]
         cv2.circle(preview, (cx, cy), FISH_TRACK_RADIUS, (0, 255, 255), 1)
-        cv2.circle(preview, (cx, cy), BITE_TRIGGER_RADIUS, (0, 165, 255), 1)
-        l = max(cx - FLOAT_MARK_RADIUS, 0)
-        t = max(cy - FLOAT_MARK_RADIUS, 0)
-        r = min(cx + FLOAT_MARK_RADIUS, preview.shape[1] - 1)
-        b = min(cy + FLOAT_MARK_RADIUS, preview.shape[0] - 1)
-        cv2.rectangle(preview, (l, t), (r, b), (0, 0, 0), 2)
+        _draw_box_border(preview, float_target["box"], (0, 0, 0), 2)
 
     if fs is not None:
         color = (0, 255, 0) if fs["bite_triggered"] else (0, 255, 255)
@@ -1347,7 +1416,7 @@ def show_fishing_preview(frame, float_center, fs):
     status = "[PAUSED]" if paused else "[RUNNING]"
     cv2.putText(preview, f"{status} F7:pause | ESC:stop",
                 (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
-    cv2.putText(preview, build_status_text(float_center, fs),
+    cv2.putText(preview, build_status_text(float_target, fs),
                 (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
 
     btn_x, btn_y = preview.shape[1] - 120, 10
@@ -1370,10 +1439,10 @@ def refresh_fishing_preview(red_lower, red_upper):
     frame = frame_full[y:y + h, x:x + w]
     if frame.size == 0:
         return None, None, None
-    fc = find_float_center(frame, red_lower, red_upper)
-    fs = find_fish_shadow(frame, fc, red_lower, red_upper)
-    show_fishing_preview(frame, fc, fs)
-    return frame, fc, fs
+    ft = find_float_target(frame, red_lower, red_upper)
+    fs = find_fish_shadow(frame, ft, red_lower, red_upper)
+    show_fishing_preview(frame, ft, fs)
+    return frame, ft, fs
 
 
 def wait_with_preview(duration, red_lower, red_upper):
@@ -1445,11 +1514,8 @@ def main():
             time.sleep(0.05)
             continue
 
-        cast_delay = random_delay(0.8, 1.3)
-        print(f"[动作] 抛竿（等待 {cast_delay:.2f}s）")
+        print("[动作] 抛竿")
         cdp_send_key(KEY_F)
-        if not wait_with_preview(cast_delay, red_lower, red_upper):
-            continue
 
         bite = False
         start = time.time()
@@ -1462,7 +1528,7 @@ def main():
                 break
             _, _, fs = refresh_fishing_preview(red_lower, red_upper)
             if fish_touching_float(fs):
-                r_delay = random_delay(0.2, 0.3)
+                r_delay = gaussian_delay(0.13, 0.17)
                 print(f"[检测] 咬钩！反应 {r_delay:.2f}s")
                 bite = True
                 if not wait_with_preview(r_delay, red_lower, red_upper):
