@@ -63,7 +63,8 @@ FISH_MIN_AREA = 25
 FISH_BRIGHTNESS_DROP = 12
 CAST_BITE_DETECTION_DELAY = 2.0
 ROD_SWITCH_KEY_PRESSES = 2
-ROD_SWITCH_KEY_INTERVAL = 0.12
+ROD_SWITCH_PRE_KEY_DELAY = (0.16, 0.24)
+ROD_SWITCH_KEY_INTERVAL = (0.08, 0.12)
 ROD_SWITCH_SETTLE_DELAY = 0.8
 
 PW_RENDERFULLCONTENT = 0x00000002
@@ -623,8 +624,37 @@ def cdp_reconnect():
         return False
 
 
-def cdp_send_key(key_def):
-    """发按键：rawKeyDown → 停留 30-80ms → keyUp。遇断线尝试一次重连。"""
+def cdp_focus_game_canvas():
+    """尽量把页面焦点放回游戏 canvas；切换快捷栏前尤其需要。"""
+    result = cdp_evaluate(
+        """
+        (() => {
+            const canvas = document.querySelector("canvas");
+            if (canvas) {
+                if (!canvas.hasAttribute("tabindex")) canvas.tabIndex = 0;
+                canvas.focus();
+                return {
+                    ok: document.activeElement === canvas,
+                    target: "canvas",
+                };
+            }
+            window.focus();
+            if (document.body && typeof document.body.focus === "function") {
+                document.body.focus();
+            }
+            return {
+                ok: document.activeElement === document.body,
+                target: document.activeElement ? document.activeElement.tagName : "",
+            };
+        })()
+        """,
+        timeout=3.0,
+    )
+    return isinstance(result, dict) and bool(result.get("ok"))
+
+
+def cdp_send_key(key_def, printable=False):
+    """发按键。普通控制键走 rawKeyDown；数字快捷键走 printable 事件。"""
     base = {
         "windowsVirtualKeyCode": key_def["vk"],
         "nativeVirtualKeyCode": key_def["vk"],
@@ -638,7 +668,10 @@ def cdp_send_key(key_def):
             ok = _cdp_raw_send("Input.dispatchKeyEvent", params)
         return ok
 
-    down_params = dict(base, type="rawKeyDown")
+    down_params = dict(base, type="keyDown" if printable else "rawKeyDown")
+    if printable:
+        down_params["text"] = key_def["key"]
+        down_params["unmodifiedText"] = key_def["key"]
     up_params = dict(base, type="keyUp")
 
     if not send(down_params):
@@ -1102,16 +1135,18 @@ def _switch_to_rod_slot(slot, reason="", force=False):
     if CURRENT_ROD_SLOT == slot and not force:
         return True
 
+    time.sleep(gaussian_delay(*ROD_SWITCH_PRE_KEY_DELAY))
+    cdp_focus_game_canvas()
     for press_index in range(ROD_SWITCH_KEY_PRESSES):
-        if not cdp_send_key(KEY_DIGITS[slot]):
+        if not cdp_send_key(KEY_DIGITS[slot], printable=True):
             print(f"[鱼竿] 切换到快捷栏 {slot} 失败")
             return False
         if press_index + 1 < ROD_SWITCH_KEY_PRESSES:
-            time.sleep(ROD_SWITCH_KEY_INTERVAL)
+            time.sleep(gaussian_delay(*ROD_SWITCH_KEY_INTERVAL))
 
     CURRENT_ROD_SLOT = slot
     suffix = f"（{reason}）" if reason else ""
-    print(f"[鱼竿] 已切换到快捷栏 {slot}{suffix}")
+    print(f"[鱼竿] 已发送快捷栏 {slot} 切换按键{suffix}")
     time.sleep(random_delay(ROD_SWITCH_SETTLE_DELAY, ROD_SWITCH_SETTLE_DELAY + 0.15))
     return True
 
