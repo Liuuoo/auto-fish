@@ -56,9 +56,15 @@ FLOAT_BOX_PADDING = 2
 FLOAT_BOX_MIN_SIZE = 14
 FLOAT_BOX_MAX_SIZE = 70
 FLOAT_BOX_TRIGGER_THICKNESS = 5
+FLOAT_CONFIRM_BOX_PADDING = 16
+FLOAT_CONFIRM_BOX_THICKNESS = 6
 FLOAT_MIN_AREA = 50
 FISH_MIN_AREA = 25
 FISH_BRIGHTNESS_DROP = 12
+CAST_BITE_DETECTION_DELAY = 2.0
+ROD_SWITCH_KEY_PRESSES = 2
+ROD_SWITCH_KEY_INTERVAL = 0.12
+ROD_SWITCH_SETTLE_DELAY = 0.8
 
 PW_RENDERFULLCONTENT = 0x00000002
 DIB_RGB_COLORS = 0
@@ -101,6 +107,8 @@ temp_region = None
 MOUSE_PARAM = {"scale": 1.0, "client_w": 0, "client_h": 0}
 CURRENT_ROD_SLOT = None
 LAST_ROD_SLOTS = None
+ROD_EXPECTED_DURABILITY = None
+SELECTED_AUTH_ADDRESS = None
 
 _cdp_ws = None
 _cdp_msg_id = 0
@@ -234,6 +242,11 @@ def _square_box_from_center(center, side, width, height):
 def _offset_box(box, dx, dy, width, height):
     l, t, r, b = box
     return _clip_box((l - dx, t - dy, r - dx, b - dy), width, height)
+
+
+def _expand_box(box, padding, width, height):
+    l, t, r, b = box
+    return _clip_box((l - padding, t - padding, r + padding, b + padding), width, height)
 
 
 def _draw_box_border(target, box, color, thickness):
@@ -942,6 +955,19 @@ def _payload_pack_len(payload):
     return len(_extract_user_item_pack(payload)) if isinstance(payload, dict) else 0
 
 
+def _auth_address(auth):
+    return str((auth or {}).get("address") or "").strip().lower()
+
+
+def _mask_address_tail(address, tail_len=5):
+    text = str(address or "").strip()
+    if not text:
+        return "unknown"
+    if len(text) <= tail_len:
+        return text
+    return f"...{text[-tail_len:]}"
+
+
 def _active_addresses_from_snapshot(snapshot):
     if not isinstance(snapshot, dict):
         return []
@@ -953,40 +979,66 @@ def _active_addresses_from_snapshot(snapshot):
     return addresses
 
 
+def _choose_auth_candidate(auth_candidates):
+    global SELECTED_AUTH_ADDRESS
+
+    if not auth_candidates:
+        return None
+
+    selected = str(SELECTED_AUTH_ADDRESS or "").strip().lower()
+    for auth in auth_candidates:
+        if selected and _auth_address(auth) == selected:
+            return auth
+
+    if len(auth_candidates) == 1:
+        SELECTED_AUTH_ADDRESS = _auth_address(auth_candidates[0])
+        return auth_candidates[0]
+
+    print("[钱包] 检测到多个钱包 session，请选择当前游戏钱包：")
+    for index, auth in enumerate(auth_candidates):
+        address = _auth_address(auth)
+        print(f"  [{index}] {_mask_address_tail(address)}")
+
+    while not should_exit:
+        try:
+            choice = input("钱包编号 > ").strip()
+        except EOFError:
+            print("[钱包] 无法读取控制台输入")
+            return None
+        if not choice and len(auth_candidates) == 1:
+            SELECTED_AUTH_ADDRESS = _auth_address(auth_candidates[0])
+            return auth_candidates[0]
+        try:
+            index = int(choice)
+        except ValueError:
+            print("[钱包] 请输入列表中的编号")
+            continue
+        if 0 <= index < len(auth_candidates):
+            SELECTED_AUTH_ADDRESS = _auth_address(auth_candidates[index])
+            print(f"[钱包] 已选择 {_mask_address_tail(SELECTED_AUTH_ADDRESS)}")
+            return auth_candidates[index]
+        print("[钱包] 编号无效")
+    return None
+
+
 def fetch_tool_items_via_cdp():
     work_payload = _fetch_tool_items_via_work_api()
     if isinstance(work_payload, dict) and work_payload.get("ok"):
         return work_payload
 
     storage = cdp_get_local_storage_items()
-    storage_snapshot = _storage_context_snapshot()
-    preferred_addresses = _active_addresses_from_snapshot(storage_snapshot)
     auth_candidates = _extract_auth_candidates_from_storage(storage)
     auth_candidates.sort(
         key=lambda auth: (
-            0 if str(auth.get("address") or "").lower() in preferred_addresses else 1,
             str(auth.get("address") or ""),
         )
     )
 
     if auth_candidates:
-        best_auth = None
-        best_payload = None
-        best_score = (-1, -1)
-
-        for candidate_auth in auth_candidates:
-            candidate_payload = _fetch_tool_items_via_http(candidate_auth)
-            pack_len = _payload_pack_len(candidate_payload)
-            preferred = str(candidate_auth.get("address") or "").lower() in preferred_addresses
-            if isinstance(candidate_payload, dict) and candidate_payload.get("ok"):
-                score = (1 if preferred else 0, pack_len)
-                if score > best_score:
-                    best_score = score
-                    best_auth = candidate_auth
-                    best_payload = candidate_payload
-
-        auth = best_auth or auth_candidates[0]
-        http_payload = best_payload or _fetch_tool_items_via_http(auth)
+        auth = _choose_auth_candidate(auth_candidates)
+        if auth is None:
+            return {"ok": False, "reason": "auth_selection_cancelled"}
+        http_payload = _fetch_tool_items_via_http(auth)
         if isinstance(http_payload, dict) and http_payload.get("ok"):
             return http_payload
         if isinstance(work_payload, dict):
@@ -1043,24 +1095,41 @@ def _ordered_available_rod_slots(slots, start_after=None):
     ]
 
 
-def _switch_to_rod_slot(slot, reason=""):
+def _switch_to_rod_slot(slot, reason="", force=False):
     global CURRENT_ROD_SLOT
     if slot not in KEY_DIGITS:
         return False
-    if CURRENT_ROD_SLOT == slot:
+    if CURRENT_ROD_SLOT == slot and not force:
         return True
-    if not cdp_send_key(KEY_DIGITS[slot]):
-        print(f"[鱼竿] 切换到快捷栏 {slot} 失败")
-        return False
+
+    for press_index in range(ROD_SWITCH_KEY_PRESSES):
+        if not cdp_send_key(KEY_DIGITS[slot]):
+            print(f"[鱼竿] 切换到快捷栏 {slot} 失败")
+            return False
+        if press_index + 1 < ROD_SWITCH_KEY_PRESSES:
+            time.sleep(ROD_SWITCH_KEY_INTERVAL)
+
     CURRENT_ROD_SLOT = slot
     suffix = f"（{reason}）" if reason else ""
     print(f"[鱼竿] 已切换到快捷栏 {slot}{suffix}")
-    time.sleep(random_delay(0.3, 0.4))
+    time.sleep(random_delay(ROD_SWITCH_SETTLE_DELAY, ROD_SWITCH_SETTLE_DELAY + 0.15))
     return True
 
 
-def ensure_usable_rod(reason=""):
-    global running, paused, CURRENT_ROD_SLOT, LAST_ROD_SLOTS
+def _pause_no_usable_rod(snapshot):
+    global running, paused, CURRENT_ROD_SLOT, LAST_ROD_SLOTS, ROD_EXPECTED_DURABILITY
+
+    print("[鱼竿] 快捷栏 1-5 没有可用鱼竿，自动暂停")
+    running = False
+    paused = True
+    CURRENT_ROD_SLOT = None
+    ROD_EXPECTED_DURABILITY = None
+    LAST_ROD_SLOTS = snapshot
+    return False
+
+
+def ensure_usable_rod(reason="", force_switch=False):
+    global CURRENT_ROD_SLOT, LAST_ROD_SLOTS, ROD_EXPECTED_DURABILITY
 
     api_payload = fetch_tool_items_via_cdp()
     if not isinstance(api_payload, dict) or not api_payload.get("ok"):
@@ -1073,39 +1142,57 @@ def ensure_usable_rod(reason=""):
     print(f"[鱼竿] 快捷栏耐久 {_rod_status_text(slots)}")
 
     if CURRENT_ROD_SLOT is None:
-        inferred_slot = _infer_used_rod_slot(LAST_ROD_SLOTS, snapshot)
-        if inferred_slot is not None:
-            CURRENT_ROD_SLOT = inferred_slot
-
-    if CURRENT_ROD_SLOT is None:
         available = _ordered_available_rod_slots(slots)
         if available:
-            switched = _switch_to_rod_slot(available[0], reason=reason or "确认可用鱼竿")
+            slot = available[0]
+            switched = _switch_to_rod_slot(slot, reason=reason or "初始化鱼竿", force=True)
+            if switched:
+                ROD_EXPECTED_DURABILITY = _normalize_int(slots[slot].get("currentDurability"))
+                print(f"[鱼竿] 记录当前快捷栏 {slot}，预计剩余耐久 {ROD_EXPECTED_DURABILITY}")
             LAST_ROD_SLOTS = snapshot
             return switched
-        print("[鱼竿] 快捷栏 1-5 没有可用鱼竿，自动暂停")
-        running = False
-        paused = True
-        LAST_ROD_SLOTS = snapshot
-        return False
+        return _pause_no_usable_rod(snapshot)
 
     current_item = slots.get(CURRENT_ROD_SLOT)
-    if current_item and _normalize_int(current_item.get("currentDurability")) > 0:
+    current_durability = _normalize_int(current_item.get("currentDurability")) if current_item else 0
+    if current_durability > 0:
+        ROD_EXPECTED_DURABILITY = current_durability
+        if force_switch:
+            switched = _switch_to_rod_slot(CURRENT_ROD_SLOT, reason=reason or "重新确认鱼竿", force=True)
+            if not switched:
+                ROD_EXPECTED_DURABILITY = None
+            LAST_ROD_SLOTS = snapshot
+            return switched
+        print(f"[鱼竿] 更新当前快捷栏 {CURRENT_ROD_SLOT}，预计剩余耐久 {ROD_EXPECTED_DURABILITY}")
         LAST_ROD_SLOTS = snapshot
         return True
 
     available = _ordered_available_rod_slots(slots, start_after=CURRENT_ROD_SLOT)
     if not available:
-        print("[鱼竿] 快捷栏 1-5 没有可用鱼竿，自动暂停")
-        running = False
-        paused = True
-        CURRENT_ROD_SLOT = None
-        LAST_ROD_SLOTS = snapshot
-        return False
+        return _pause_no_usable_rod(snapshot)
 
-    switched = _switch_to_rod_slot(available[0], reason=reason or "选择可用鱼竿")
+    slot = available[0]
+    switched = _switch_to_rod_slot(slot, reason=reason or "选择可用鱼竿", force=True)
+    if switched:
+        ROD_EXPECTED_DURABILITY = _normalize_int(slots[slot].get("currentDurability"))
+        print(f"[鱼竿] 记录当前快捷栏 {slot}，预计剩余耐久 {ROD_EXPECTED_DURABILITY}")
     LAST_ROD_SLOTS = snapshot
     return switched
+
+
+def record_successful_reel():
+    global ROD_EXPECTED_DURABILITY
+
+    if ROD_EXPECTED_DURABILITY is None:
+        return ensure_usable_rod("收杆后校准")
+
+    ROD_EXPECTED_DURABILITY = max(ROD_EXPECTED_DURABILITY - 1, 0)
+    suffix = f"{CURRENT_ROD_SLOT}:{ROD_EXPECTED_DURABILITY}" if CURRENT_ROD_SLOT is not None else str(ROD_EXPECTED_DURABILITY)
+    print(f"[鱼竿] 计数耐久 {suffix}")
+
+    if ROD_EXPECTED_DURABILITY <= 0:
+        return ensure_usable_rod("耐久计数归零校准")
+    return True
 
 
 # ---------- 预览置顶 ----------
@@ -1162,7 +1249,7 @@ def mouse_callback(event, x, y, flags, param):
 
 # ---------- 键盘监听 ----------
 def on_press(key):
-    global running, paused, should_exit, TARGET_HWND, CURRENT_ROD_SLOT, LAST_ROD_SLOTS
+    global running, paused, should_exit, TARGET_HWND, CURRENT_ROD_SLOT, LAST_ROD_SLOTS, ROD_EXPECTED_DURABILITY, SELECTED_AUTH_ADDRESS
 
     if key == keyboard.Key.f8:
         hwnd = user32.GetForegroundWindow()
@@ -1189,6 +1276,8 @@ def on_press(key):
             paused = False
             CURRENT_ROD_SLOT = None
             LAST_ROD_SLOTS = None
+            ROD_EXPECTED_DURABILITY = None
+            SELECTED_AUTH_ADDRESS = None
             print("[启动] 开始自动钓鱼")
         else:
             paused = not paused
@@ -1227,9 +1316,12 @@ def find_float_target(frame, red_lower, red_upper):
     x, y, w, h = cv2.boundingRect(contour)
     side = max(w, h) + FLOAT_BOX_PADDING * 2
     side = clamp(side, FLOAT_BOX_MIN_SIZE, FLOAT_BOX_MAX_SIZE)
+    box = _square_box_from_center(center, side, frame.shape[1], frame.shape[0])
+    confirm_box = _expand_box(box, FLOAT_CONFIRM_BOX_PADDING, frame.shape[1], frame.shape[0])
     return {
         "center": center,
-        "box": _square_box_from_center(center, side, frame.shape[1], frame.shape[0]),
+        "box": box,
+        "confirm_box": confirm_box,
         "red_bbox": (x, y, x + w, y + h),
         "area": area,
     }
@@ -1268,6 +1360,18 @@ def contour_overlaps_bite_box(contour, mask_shape, trigger_box_local):
     return cv2.countNonZero(cv2.bitwise_and(trigger, cmask)) > 0
 
 
+def contour_overlaps_bite_pair(contour, mask_shape, trigger_box_local, confirm_box_local):
+    trigger = np.zeros(mask_shape, dtype=np.uint8)
+    confirm = np.zeros(mask_shape, dtype=np.uint8)
+    cmask = np.zeros(mask_shape, dtype=np.uint8)
+    _draw_box_border(trigger, trigger_box_local, 255, FLOAT_BOX_TRIGGER_THICKNESS)
+    _draw_box_border(confirm, confirm_box_local, 255, FLOAT_CONFIRM_BOX_THICKNESS)
+    cv2.drawContours(cmask, [contour], -1, 255, -1)
+    hits_trigger = cv2.countNonZero(cv2.bitwise_and(trigger, cmask)) > 0
+    hits_confirm = cv2.countNonZero(cv2.bitwise_and(confirm, cmask)) > 0
+    return hits_trigger and hits_confirm
+
+
 def find_fish_shadow(frame, float_target, red_lower, red_upper):
     if float_target is None:
         return None
@@ -1288,6 +1392,7 @@ def find_fish_shadow(frame, float_target, red_lower, red_upper):
         return None
 
     trigger_box_local = _offset_box(float_target["box"], left, top, roi.shape[1], roi.shape[0])
+    confirm_box_local = _offset_box(float_target["confirm_box"], left, top, roi.shape[1], roi.shape[0])
     mask, threshold = build_shadow_mask(roi, local, track_r, red_lower, red_upper)
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -1297,7 +1402,7 @@ def find_fish_shadow(frame, float_target, red_lower, red_upper):
         area = cv2.contourArea(c)
         if area < FISH_MIN_AREA:
             continue
-        hit = contour_overlaps_bite_box(c, mask.shape, trigger_box_local)
+        hit = contour_overlaps_bite_pair(c, mask.shape, trigger_box_local, confirm_box_local)
         item = {"contour_local": c, "area": area, "bite_triggered": hit}
         candidates.append(item)
         if hit:
@@ -1316,6 +1421,7 @@ def find_fish_shadow(frame, float_target, red_lower, red_upper):
         "bite_triggered": sel["bite_triggered"],
         "brightness_threshold": threshold,
         "float_box": float_target["box"],
+        "confirm_box": float_target["confirm_box"],
     }
 
 
@@ -1405,6 +1511,7 @@ def show_fishing_preview(frame, float_target, fs):
     if float_target is not None:
         cx, cy = float_target["center"]
         cv2.circle(preview, (cx, cy), FISH_TRACK_RADIUS, (0, 255, 255), 1)
+        _draw_box_border(preview, float_target["confirm_box"], (0, 165, 255), 2)
         _draw_box_border(preview, float_target["box"], (0, 0, 0), 2)
 
     if fs is not None:
@@ -1514,19 +1621,36 @@ def main():
             time.sleep(0.05)
             continue
 
+        if CURRENT_ROD_SLOT is None or ROD_EXPECTED_DURABILITY is None or ROD_EXPECTED_DURABILITY <= 0:
+            if not ensure_usable_rod("启动检查"):
+                time.sleep(0.5)
+                continue
+
+        if ROD_EXPECTED_DURABILITY is None or ROD_EXPECTED_DURABILITY <= 0:
+            time.sleep(0.5)
+            continue
+
         print("[动作] 抛竿")
-        cdp_send_key(KEY_F)
+        if not cdp_send_key(KEY_F):
+            print("[动作] 抛竿失败")
+            time.sleep(0.5)
+            continue
 
         bite = False
         start = time.time()
+        detect_after = start + CAST_BITE_DETECTION_DELAY
         timeout = random_delay(23, 27)
         while running and not paused and not bite and not should_exit:
             if time.time() - start > timeout:
                 print("[提示] 等待超时，重抛")
+                ensure_usable_rod("等待超时校准", force_switch=True)
                 break
             if user32.IsIconic(TARGET_HWND):
                 break
             _, _, fs = refresh_fishing_preview(red_lower, red_upper)
+            if time.time() < detect_after:
+                time.sleep(random_delay(0.04, 0.08))
+                continue
             if fish_touching_float(fs):
                 r_delay = gaussian_delay(0.13, 0.17)
                 print(f"[检测] 咬钩！反应 {r_delay:.2f}s")
@@ -1537,11 +1661,14 @@ def main():
             time.sleep(random_delay(0.04, 0.08))
 
         if bite and running and not paused and not should_exit:
-            cdp_send_key(KEY_F)
-            reel_delay = random_delay(8.0, 9.0)
+            if not cdp_send_key(KEY_F):
+                print("[动作] 收竿失败")
+                time.sleep(0.5)
+                continue
+            reel_delay = random_delay(6.0, 7.0)
             print(f"[动作] 收竿（等待 {reel_delay:.2f}s）")
             if wait_with_preview(reel_delay, red_lower, red_upper):
-                ensure_usable_rod("收杆后检查")
+                record_successful_reel()
 
 
 if __name__ == "__main__":
