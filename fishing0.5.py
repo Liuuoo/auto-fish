@@ -62,6 +62,9 @@ FLOAT_MIN_AREA = 50
 FISH_MIN_AREA = 25
 FISH_BRIGHTNESS_DROP = 12
 CAST_BITE_DETECTION_DELAY = 2.0
+AIR_DROP_REWARD_FILE = "rewards.txt"
+AIR_DROP_CDP_TIMEOUT = 0.8
+AIR_DROP_HANDLE_DELAY = 0.2
 ROD_SWITCH_KEY_PRESSES = 2
 ROD_SWITCH_PRE_KEY_DELAY = (0.16, 0.24)
 ROD_SWITCH_KEY_INTERVAL = (0.08, 0.12)
@@ -604,6 +607,7 @@ def cdp_get_local_storage_items(timeout=5.0):
 
 
 _cdp_target_cache = None
+_airdrop_reward_signature_cache = None
 
 
 def cdp_reconnect():
@@ -651,6 +655,191 @@ def cdp_focus_game_canvas():
         timeout=3.0,
     )
     return isinstance(result, dict) and bool(result.get("ok"))
+
+
+def _airdrop_reward_file_candidates():
+    base_dir = Path(__file__).resolve().parent
+    candidates = [
+        Path.cwd() / AIR_DROP_REWARD_FILE,
+        base_dir / AIR_DROP_REWARD_FILE,
+        base_dir.parent / AIR_DROP_REWARD_FILE,
+        base_dir.parent.parent / AIR_DROP_REWARD_FILE,
+    ]
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        candidates.extend([
+            exe_dir / AIR_DROP_REWARD_FILE,
+            exe_dir.parent / AIR_DROP_REWARD_FILE,
+            exe_dir.parent.parent / AIR_DROP_REWARD_FILE,
+        ])
+    return candidates
+
+
+def _load_airdrop_reward_signature():
+    """从 rewards.txt 提取稳定文本和 HTML 特征，避免整段 HTML 精确匹配过脆。"""
+    global _airdrop_reward_signature_cache
+    if _airdrop_reward_signature_cache is not None:
+        return _airdrop_reward_signature_cache
+
+    raw = ""
+    for path in _airdrop_reward_file_candidates():
+        try:
+            raw = path.read_text(encoding="utf-8-sig").strip()
+            if raw:
+                break
+        except OSError:
+            continue
+
+    if not raw:
+        _airdrop_reward_signature_cache = None
+        return None
+
+    html_mod = __import__("html")
+    visible_text = html_mod.unescape(re.sub(r"<[^>]+>", "\n", raw))
+    text_markers = []
+    for line in (part.strip() for part in visible_text.splitlines()):
+        if len(line) >= 4 and line not in text_markers:
+            text_markers.append(line)
+
+    preferred_text_markers = [
+        marker for marker in text_markers
+        if "congrat" in marker.lower()
+        or "hidden reward" in marker.lower()
+        or "claim" == marker.lower()
+        or "inswap" in marker.lower()
+    ]
+    if len(preferred_text_markers) >= 2:
+        text_markers = preferred_text_markers
+    else:
+        text_markers = text_markers[:6]
+
+    html_markers = [
+        marker for marker in (
+            "reward-title",
+            "rewards-content",
+            "hidden reward",
+            "pizza-swap",
+            "Claim",
+        )
+        if marker in raw
+    ]
+
+    _airdrop_reward_signature_cache = {
+        "textMarkers": text_markers,
+        "htmlMarkers": html_markers,
+    }
+    return _airdrop_reward_signature_cache
+
+
+def cdp_handle_airdrop_reward():
+    signature = _load_airdrop_reward_signature()
+    if not signature:
+        return False
+
+    detect_script = r"""
+(() => {
+  const signature = %s;
+  const body = document.body;
+  if (!body) return { found: false, action: "no-body" };
+
+  const textMarkers = signature.textMarkers || [];
+  const htmlMarkers = signature.htmlMarkers || [];
+  const bodyText = body.innerText || "";
+  const bodyHtml = body.innerHTML || "";
+  const textHits = textMarkers.filter((marker) => marker && bodyText.includes(marker)).length;
+  const htmlHits = htmlMarkers.filter((marker) => marker && bodyHtml.includes(marker)).length;
+  const requiredTextHits = Math.min(2, textMarkers.length);
+  const requiredHtmlHits = Math.min(3, htmlMarkers.length);
+  const foundByText = requiredTextHits > 0 && textHits >= requiredTextHits;
+  const foundByHtml = requiredHtmlHits > 0 && htmlHits >= requiredHtmlHits;
+  return { found: foundByText || foundByHtml };
+})()
+""" % json.dumps(signature, ensure_ascii=False)
+
+    detected = cdp_evaluate(detect_script, timeout=AIR_DROP_CDP_TIMEOUT)
+    if not (isinstance(detected, dict) and detected.get("found")):
+        return False
+
+    time.sleep(AIR_DROP_HANDLE_DELAY)
+
+    handle_script = r"""
+(() => {
+  const signature = %s;
+  const body = document.body;
+  if (!body) return { found: false, action: "no-body" };
+
+  const textMarkers = signature.textMarkers || [];
+  const htmlMarkers = signature.htmlMarkers || [];
+  const bodyText = body.innerText || "";
+  const bodyHtml = body.innerHTML || "";
+  const textHits = textMarkers.filter((marker) => marker && bodyText.includes(marker)).length;
+  const htmlHits = htmlMarkers.filter((marker) => marker && bodyHtml.includes(marker)).length;
+  const requiredTextHits = Math.min(2, textMarkers.length);
+  const requiredHtmlHits = Math.min(3, htmlMarkers.length);
+  const foundByText = requiredTextHits > 0 && textHits >= requiredTextHits;
+  const foundByHtml = requiredHtmlHits > 0 && htmlHits >= requiredHtmlHits;
+  if (!foundByText && !foundByHtml) return { found: false, action: "not-found" };
+
+  const isVisible = (el) => {
+    if (!el) return false;
+    const rect = el.getBoundingClientRect();
+    const style = getComputedStyle(el);
+    return rect.width > 0 && rect.height > 0
+      && style.display !== "none"
+      && style.visibility !== "hidden"
+      && style.opacity !== "0";
+  };
+
+  const scoreNode = (el) => {
+    const text = el.innerText || "";
+    const html = el.innerHTML || "";
+    const hits = textMarkers.filter((marker) => marker && text.includes(marker)).length
+      + htmlMarkers.filter((marker) => marker && html.includes(marker)).length;
+    const rect = el.getBoundingClientRect();
+    return { el, hits, area: rect.width * rect.height };
+  };
+
+  const roots = Array.from(document.querySelectorAll("body *"))
+    .filter(isVisible)
+    .map(scoreNode)
+    .filter((item) => item.hits >= Math.max(1, requiredTextHits))
+    .sort((a, b) => b.hits - a.hits || a.area - b.area);
+  const root = roots.length ? roots[0].el : body;
+
+  const scopedButtons = root === body ? [] : Array.from(root.querySelectorAll("button,[role='button']"));
+  const allButtons = Array.from(document.querySelectorAll("button,[role='button']"));
+  const buttons = (scopedButtons.length ? scopedButtons : allButtons)
+    .filter(isVisible)
+    .sort((a, b) => {
+      const ac = /claim/i.test(a.innerText || "") ? 1 : 0;
+      const bc = /claim/i.test(b.innerText || "") ? 1 : 0;
+      return bc - ac;
+    });
+  if (buttons.length) {
+    buttons[0].click();
+    return { found: true, action: "click" };
+  }
+
+  let hideNode = root;
+  for (let i = 0; i < 3 && hideNode && hideNode.parentElement && hideNode.parentElement !== body; i++) {
+    const parentText = hideNode.parentElement.innerText || "";
+    if (textMarkers.some((marker) => marker && parentText.includes(marker))) {
+      hideNode = hideNode.parentElement;
+    }
+  }
+  if (hideNode && hideNode !== body) {
+    hideNode.remove();
+    return { found: true, action: "remove" };
+  }
+  return { found: false, action: "unhandled" };
+})()
+""" % json.dumps(signature, ensure_ascii=False)
+
+    result = cdp_evaluate(handle_script, timeout=AIR_DROP_CDP_TIMEOUT)
+    if isinstance(result, dict) and result.get("found"):
+        print("收获小空投")
+        return True
+    return False
 
 
 def cdp_send_key(key_def, printable=False):
@@ -1703,6 +1892,7 @@ def main():
             reel_delay = random_delay(6.0, 7.0)
             print(f"[动作] 收竿（等待 {reel_delay:.2f}s）")
             if wait_with_preview(reel_delay, red_lower, red_upper):
+                cdp_handle_airdrop_reward()
                 record_successful_reel()
 
 
