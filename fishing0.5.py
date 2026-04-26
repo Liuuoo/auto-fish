@@ -11,6 +11,7 @@ import random
 import urllib.error
 import urllib.parse
 import urllib.request
+import winsound
 
 import cv2
 import numpy as np
@@ -63,6 +64,8 @@ FISH_MIN_AREA = 25
 FISH_BRIGHTNESS_DROP = 12
 CAST_BITE_DETECTION_DELAY = 2.0
 AIR_DROP_REWARD_FILE = "rewards.txt"
+HIDDEN_AIRDROP_FILE = "hidden.txt"
+NO_ENERGY_FILE = "noEnergy.txt"
 AIR_DROP_CDP_TIMEOUT = 0.8
 AIR_DROP_HANDLE_DELAY = 0.2
 ROD_SWITCH_KEY_PRESSES = 2
@@ -608,6 +611,8 @@ def cdp_get_local_storage_items(timeout=5.0):
 
 _cdp_target_cache = None
 _airdrop_reward_signature_cache = None
+_hidden_airdrop_signature_cache = None
+_no_energy_signature_cache = None
 
 
 def cdp_reconnect():
@@ -657,32 +662,27 @@ def cdp_focus_game_canvas():
     return isinstance(result, dict) and bool(result.get("ok"))
 
 
-def _airdrop_reward_file_candidates():
+def _airdrop_file_candidates(filename):
     base_dir = Path(__file__).resolve().parent
     candidates = [
-        Path.cwd() / AIR_DROP_REWARD_FILE,
-        base_dir / AIR_DROP_REWARD_FILE,
-        base_dir.parent / AIR_DROP_REWARD_FILE,
-        base_dir.parent.parent / AIR_DROP_REWARD_FILE,
+        Path.cwd() / filename,
+        base_dir / filename,
+        base_dir.parent / filename,
+        base_dir.parent.parent / filename,
     ]
     if getattr(sys, "frozen", False):
         exe_dir = Path(sys.executable).resolve().parent
         candidates.extend([
-            exe_dir / AIR_DROP_REWARD_FILE,
-            exe_dir.parent / AIR_DROP_REWARD_FILE,
-            exe_dir.parent.parent / AIR_DROP_REWARD_FILE,
+            exe_dir / filename,
+            exe_dir.parent / filename,
+            exe_dir.parent.parent / filename,
         ])
     return candidates
 
 
-def _load_airdrop_reward_signature():
-    """从 rewards.txt 提取稳定文本和 HTML 特征，避免整段 HTML 精确匹配过脆。"""
-    global _airdrop_reward_signature_cache
-    if _airdrop_reward_signature_cache is not None:
-        return _airdrop_reward_signature_cache
-
+def _build_airdrop_signature(filename, html_marker_candidates, preferred_predicate):
     raw = ""
-    for path in _airdrop_reward_file_candidates():
+    for path in _airdrop_file_candidates(filename):
         try:
             raw = path.read_text(encoding="utf-8-sig").strip()
             if raw:
@@ -691,7 +691,6 @@ def _load_airdrop_reward_signature():
             continue
 
     if not raw:
-        _airdrop_reward_signature_cache = None
         return None
 
     html_mod = __import__("html")
@@ -703,10 +702,7 @@ def _load_airdrop_reward_signature():
 
     preferred_text_markers = [
         marker for marker in text_markers
-        if "congrat" in marker.lower()
-        or "hidden reward" in marker.lower()
-        or "claim" == marker.lower()
-        or "inswap" in marker.lower()
+        if preferred_predicate(marker)
     ]
     if len(preferred_text_markers) >= 2:
         text_markers = preferred_text_markers
@@ -714,29 +710,96 @@ def _load_airdrop_reward_signature():
         text_markers = text_markers[:6]
 
     html_markers = [
-        marker for marker in (
+        marker for marker in html_marker_candidates
+        if marker in raw
+    ]
+
+    return {
+        "textMarkers": text_markers,
+        "htmlMarkers": html_markers,
+    }
+
+
+def _load_airdrop_reward_signature():
+    """从 rewards.txt 提取稳定文本和 HTML 特征，避免整段 HTML 精确匹配过脆。"""
+    global _airdrop_reward_signature_cache
+    if _airdrop_reward_signature_cache is not None:
+        return _airdrop_reward_signature_cache
+
+    _airdrop_reward_signature_cache = _build_airdrop_signature(
+        AIR_DROP_REWARD_FILE,
+        (
             "reward-title",
             "rewards-content",
             "hidden reward",
             "pizza-swap",
             "Claim",
-        )
-        if marker in raw
-    ]
-
-    _airdrop_reward_signature_cache = {
-        "textMarkers": text_markers,
-        "htmlMarkers": html_markers,
-    }
+        ),
+        lambda marker: (
+            "congrat" in marker.lower()
+            or "hidden reward" in marker.lower()
+            or "claim" == marker.lower()
+            or "inswap" in marker.lower()
+        ),
+    )
     return _airdrop_reward_signature_cache
 
 
-def cdp_handle_airdrop_reward():
-    signature = _load_airdrop_reward_signature()
+def _load_hidden_airdrop_signature():
+    """从 hidden.txt 提取大空投任务弹窗特征；此分支只识别，不修改页面。"""
+    global _hidden_airdrop_signature_cache
+    if _hidden_airdrop_signature_cache is not None:
+        return _hidden_airdrop_signature_cache
+
+    _hidden_airdrop_signature_cache = _build_airdrop_signature(
+        HIDDEN_AIRDROP_FILE,
+        (
+            "Hidden Challenge",
+            "Chop Master",
+            "orderTree_step1",
+            "orderTree_step2",
+            "easterRule_step3",
+            "Start!",
+        ),
+        lambda marker: (
+            "hidden challenge" in marker.lower()
+            or "chop master" in marker.lower()
+            or "glowing trees" in marker.lower()
+            or "start!" == marker.lower()
+        ),
+    )
+    return _hidden_airdrop_signature_cache
+
+
+def _load_no_energy_signature():
+    """从 noEnergy.txt 提取无体力弹窗特征；此分支只点击 Buy Energy，不修改 DOM。"""
+    global _no_energy_signature_cache
+    if _no_energy_signature_cache is not None:
+        return _no_energy_signature_cache
+
+    _no_energy_signature_cache = _build_airdrop_signature(
+        NO_ENERGY_FILE,
+        (
+            "energy deficiency",
+            "Buy Energy",
+            "Restore full in",
+            "perform this action",
+        ),
+        lambda marker: (
+            "energy deficiency" in marker.lower()
+            or "enough energy" in marker.lower()
+            or "buy energy" == marker.lower()
+            or "restore full" in marker.lower()
+        ),
+    )
+    return _no_energy_signature_cache
+
+
+def _cdp_detect_airdrop_signature(signature):
     if not signature:
         return False
 
-    detect_script = r"""
+    script = r"""
 (() => {
   const signature = %s;
   const body = document.body;
@@ -756,8 +819,13 @@ def cdp_handle_airdrop_reward():
 })()
 """ % json.dumps(signature, ensure_ascii=False)
 
-    detected = cdp_evaluate(detect_script, timeout=AIR_DROP_CDP_TIMEOUT)
-    if not (isinstance(detected, dict) and detected.get("found")):
+    result = cdp_evaluate(script, timeout=AIR_DROP_CDP_TIMEOUT)
+    return isinstance(result, dict) and bool(result.get("found"))
+
+
+def cdp_handle_airdrop_reward():
+    signature = _load_airdrop_reward_signature()
+    if not _cdp_detect_airdrop_signature(signature):
         return False
 
     time.sleep(AIR_DROP_HANDLE_DELAY)
@@ -840,6 +908,87 @@ def cdp_handle_airdrop_reward():
         print("收获小空投")
         return True
     return False
+
+
+def cdp_detect_hidden_airdrop():
+    return _cdp_detect_airdrop_signature(_load_hidden_airdrop_signature())
+
+
+def cdp_handle_no_energy():
+    signature = _load_no_energy_signature()
+    if not _cdp_detect_airdrop_signature(signature):
+        return False
+
+    script = r"""
+(() => {
+  const signature = %s;
+  const body = document.body;
+  if (!body) return { found: false, action: "no-body" };
+
+  const textMarkers = signature.textMarkers || [];
+  const htmlMarkers = signature.htmlMarkers || [];
+  const bodyText = body.innerText || "";
+  const bodyHtml = body.innerHTML || "";
+  const textHits = textMarkers.filter((marker) => marker && bodyText.includes(marker)).length;
+  const htmlHits = htmlMarkers.filter((marker) => marker && bodyHtml.includes(marker)).length;
+  const requiredTextHits = Math.min(2, textMarkers.length);
+  const requiredHtmlHits = Math.min(2, htmlMarkers.length);
+  const foundByText = requiredTextHits > 0 && textHits >= requiredTextHits;
+  const foundByHtml = requiredHtmlHits > 0 && htmlHits >= requiredHtmlHits;
+  if (!foundByText && !foundByHtml) return { found: false, action: "not-found" };
+
+  const isVisible = (el) => {
+    if (!el) return false;
+    const rect = el.getBoundingClientRect();
+    const style = getComputedStyle(el);
+    return rect.width > 0 && rect.height > 0
+      && style.display !== "none"
+      && style.visibility !== "hidden"
+      && style.opacity !== "0";
+  };
+
+  const buttons = Array.from(document.querySelectorAll("button,[role='button']"))
+    .filter(isVisible)
+    .map((el) => ({ el, text: (el.innerText || "").trim() }))
+    .filter((item) => /buy\s*energy/i.test(item.text) || (/energy/i.test(item.text) && !/cancel/i.test(item.text)))
+    .sort((a, b) => {
+      const ae = /^buy\s*energy$/i.test(a.text) ? 1 : 0;
+      const be = /^buy\s*energy$/i.test(b.text) ? 1 : 0;
+      return be - ae;
+    });
+  if (!buttons.length) return { found: true, action: "button-not-found" };
+
+  buttons[0].el.click();
+  return { found: true, action: "click" };
+})()
+""" % json.dumps(signature, ensure_ascii=False)
+
+    result = cdp_evaluate(script, timeout=AIR_DROP_CDP_TIMEOUT)
+    return isinstance(result, dict) and result.get("action") == "click"
+
+
+def beep_once():
+    try:
+        winsound.Beep(1200, 350)
+    except Exception:
+        try:
+            winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
+        except Exception:
+            pass
+
+
+def pause_for_hidden_airdrop():
+    global paused
+    beep_once()
+    paused = True
+    print("[空投] 发现大空投，请手动处理任务；脚本已暂停，处理完成后按 F7 继续")
+
+
+def pause_for_no_energy():
+    global paused
+    beep_once()
+    paused = True
+    print("[体力] 检测到无体力，已点击 Buy Energy；脚本已暂停，处理完成后按 F7 继续")
 
 
 def cdp_send_key(key_def, printable=False):
@@ -1404,10 +1553,12 @@ def ensure_usable_rod(reason="", force_switch=False):
     return switched
 
 
-def record_successful_reel():
+def record_successful_reel(defer_zero_switch=False):
     global ROD_EXPECTED_DURABILITY
 
     if ROD_EXPECTED_DURABILITY is None:
+        if defer_zero_switch:
+            return True
         return ensure_usable_rod("收杆后校准")
 
     ROD_EXPECTED_DURABILITY = max(ROD_EXPECTED_DURABILITY - 1, 0)
@@ -1415,6 +1566,8 @@ def record_successful_reel():
     print(f"[鱼竿] 计数耐久 {suffix}")
 
     if ROD_EXPECTED_DURABILITY <= 0:
+        if defer_zero_switch:
+            return True
         return ensure_usable_rod("耐久计数归零校准")
     return True
 
@@ -1859,6 +2012,9 @@ def main():
             print("[动作] 抛竿失败")
             time.sleep(0.5)
             continue
+        if cdp_handle_no_energy():
+            pause_for_no_energy()
+            continue
 
         bite = False
         start = time.time()
@@ -1892,6 +2048,13 @@ def main():
             reel_delay = random_delay(6.0, 7.0)
             print(f"[动作] 收竿（等待 {reel_delay:.2f}s）")
             if wait_with_preview(reel_delay, red_lower, red_upper):
+                if cdp_handle_no_energy():
+                    pause_for_no_energy()
+                    continue
+                if cdp_detect_hidden_airdrop():
+                    record_successful_reel(defer_zero_switch=True)
+                    pause_for_hidden_airdrop()
+                    continue
                 cdp_handle_airdrop_reward()
                 record_successful_reel()
 
