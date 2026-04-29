@@ -979,17 +979,23 @@ def beep_once():
 
 
 def pause_for_hidden_airdrop():
-    global paused
+    global paused, CDP_PORT
     beep_once()
     paused = True
-    print("[空投] 发现大空投，请手动处理任务；脚本已暂停，处理完成后按 F7 继续")
+    # 根据端口号显示正确的快捷键
+    hotkey_map = {9222: 'F7', 9223: 'F9', 9224: 'F10', 9225: 'F11', 9226: 'F12'}
+    hotkey = hotkey_map.get(CDP_PORT, 'F7')
+    print(f"[空投] 发现大空投，请手动处理任务；脚本已暂停，处理完成后按 {hotkey} 继续")
 
 
 def pause_for_no_energy():
-    global paused
+    global paused, CDP_PORT
     beep_once()
     paused = True
-    print("[体力] 检测到无体力，已点击 Buy Energy；脚本已暂停，处理完成后按 F7 继续")
+    # 根据端口号显示正确的快捷键
+    hotkey_map = {9222: 'F7', 9223: 'F9', 9224: 'F10', 9225: 'F11', 9226: 'F12'}
+    hotkey = hotkey_map.get(CDP_PORT, 'F7')
+    print(f"[体力] 检测到无体力，已点击 Buy Energy；脚本已暂停，处理完成后按 {hotkey} 继续")
 
 
 def cdp_send_key(key_def, printable=False):
