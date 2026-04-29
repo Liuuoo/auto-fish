@@ -54,49 +54,14 @@ if ($null -eq $edgePath) {
 Write-Host "Found: $edgePath" -ForegroundColor Green
 Write-Host ""
 
-# Step 3: Start browsers
-Write-Host "[3/4] Starting browsers..." -ForegroundColor Yellow
+# Step 3 & 4: Start browsers and fishing scripts one by one
+Write-Host "[3/4] Starting accounts one by one..." -ForegroundColor Yellow
+Write-Host "This avoids port conflicts by starting each account sequentially." -ForegroundColor Gray
+Write-Host ""
+
 $basePort = 9222
-
-for ($i = 0; $i -lt $accountCount; $i++) {
-    $port = $basePort + $i
-    $accountName = "Account$($i + 1)"
-    $userDataDir = "$env:TEMP\chrome-fishing-$port"
-
-    Write-Host "  Starting $accountName (port $port)..." -ForegroundColor Cyan
-
-    $arguments = @(
-        "--remote-debugging-port=$port",
-        "--user-data-dir=`"$userDataDir`"",
-        "--remote-allow-origins=*",
-        "--disable-features=RendererCodeIntegrity"
-    )
-
-    Start-Process -FilePath $edgePath -ArgumentList $arguments
-    Start-Sleep -Seconds 2
-}
-
-Write-Host "Done. All browsers started." -ForegroundColor Green
-Write-Host ""
-
-# Wait for user to login
-Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "Please login to your accounts" -ForegroundColor Cyan
-Write-Host "========================================" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "Browser windows: $accountCount" -ForegroundColor Yellow
-Write-Host "Please in each browser:" -ForegroundColor Yellow
-Write-Host "  1. Visit the game website" -ForegroundColor White
-Write-Host "  2. Login to your account" -ForegroundColor White
-Write-Host "  3. Go to fishing page" -ForegroundColor White
-Write-Host ""
-Read-Host "Press Enter when ready to start fishing scripts"
-
-# Step 4: Start fishing scripts
-Write-Host ""
-Write-Host "[4/4] Starting fishing scripts..." -ForegroundColor Yellow
-
 $scriptPath = Join-Path $PSScriptRoot "fishing0.5.py"
+
 if (-not (Test-Path $scriptPath)) {
     Write-Host "ERROR: fishing0.5.py not found" -ForegroundColor Red
     Read-Host "Press Enter to exit"
@@ -116,18 +81,59 @@ for ($i = 0; $i -lt $accountCount; $i++) {
     $port = $basePort + $i
     $accountName = "Account$($i + 1)"
     $hotkey = $hotkeyMap[$i]
+    $userDataDir = "$env:TEMP\chrome-fishing-$port"
 
-    Write-Host "  Starting $accountName fishing script (Hotkey: $hotkey)..." -ForegroundColor Cyan
+    Write-Host "========================================" -ForegroundColor Cyan
+    Write-Host "Setting up $accountName (Port: $port, Hotkey: $hotkey)" -ForegroundColor Cyan
+    Write-Host "========================================" -ForegroundColor Cyan
+    Write-Host ""
 
+    # Start browser
+    Write-Host "[Step 1/3] Starting browser..." -ForegroundColor Yellow
+    $arguments = @(
+        "--remote-debugging-port=$port",
+        "--user-data-dir=`"$userDataDir`"",
+        "--remote-allow-origins=*",
+        "--disable-features=RendererCodeIntegrity"
+    )
+    Start-Process -FilePath $edgePath -ArgumentList $arguments
+    Start-Sleep -Seconds 3
+    Write-Host "Browser started." -ForegroundColor Green
+    Write-Host ""
+
+    # Wait for login
+    Write-Host "[Step 2/3] Please login to $accountName" -ForegroundColor Yellow
+    Write-Host "  1. Visit the game website" -ForegroundColor White
+    Write-Host "  2. Login to your account" -ForegroundColor White
+    Write-Host "  3. Go to fishing page" -ForegroundColor White
+    Write-Host ""
+    Read-Host "Press Enter when logged in and ready"
+
+    # Start fishing script
+    Write-Host ""
+    Write-Host "[Step 3/3] Starting fishing script..." -ForegroundColor Yellow
     $cmd = "python `"$scriptPath`" --port $port --name $accountName --auto-bind"
-
-    # Start in new command window
     Start-Process cmd -ArgumentList "/k", $cmd -WindowStyle Normal
+    Start-Sleep -Seconds 2
+    Write-Host "Fishing script started." -ForegroundColor Green
+    Write-Host ""
 
-    Start-Sleep -Seconds 1
+    Write-Host "Next steps for $accountName" -ForegroundColor Yellow
+    Write-Host "  1. In the fishing script window, select the browser window (enter window number)" -ForegroundColor White
+    Write-Host "  2. Drag to select fishing area in the preview window" -ForegroundColor White
+    Write-Host "  3. Press $hotkey to start fishing" -ForegroundColor Cyan
+    Write-Host ""
+
+    if ($i -lt $accountCount - 1) {
+        Read-Host "Press Enter to continue to next account"
+        Write-Host ""
+    }
 }
 
-Write-Host "Done. All fishing scripts started." -ForegroundColor Green
+Write-Host ""
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "All accounts setup complete!" -ForegroundColor Green
+Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
 # Complete
