@@ -63,45 +63,40 @@ set BASE_PORT=9222
 REM Start Account 1
 if %accountCount% GEQ 1 (
     set /a PORT1=%BASE_PORT%+0
-    set USERDATA1=%TEMP%\chrome-fishing-!PORT1!
-    echo   Starting Account1 ^(port !PORT1!^)...
-    start "" "%EDGE_PATH%" --remote-debugging-port=!PORT1! --user-data-dir="!USERDATA1!" --remote-allow-origins=* --disable-features=RendererCodeIntegrity
+    echo   Starting Account1 (port 9222)...
+    start "" "%EDGE_PATH%" --remote-debugging-port=9222 --user-data-dir="%TEMP%\chrome-fishing-9222" --remote-allow-origins=* --disable-features=RendererCodeIntegrity
     timeout /t 2 /nobreak >nul
 )
 
 REM Start Account 2
 if %accountCount% GEQ 2 (
     set /a PORT2=%BASE_PORT%+1
-    set USERDATA2=%TEMP%\chrome-fishing-!PORT2!
-    echo   Starting Account2 ^(port !PORT2!^)...
-    start "" "%EDGE_PATH%" --remote-debugging-port=!PORT2! --user-data-dir="!USERDATA2!" --remote-allow-origins=* --disable-features=RendererCodeIntegrity
+    echo   Starting Account2 (port 9223)...
+    start "" "%EDGE_PATH%" --remote-debugging-port=9223 --user-data-dir="%TEMP%\chrome-fishing-9223" --remote-allow-origins=* --disable-features=RendererCodeIntegrity
     timeout /t 2 /nobreak >nul
 )
 
 REM Start Account 3
 if %accountCount% GEQ 3 (
     set /a PORT3=%BASE_PORT%+2
-    set USERDATA3=%TEMP%\chrome-fishing-!PORT3!
-    echo   Starting Account3 ^(port !PORT3!^)...
-    start "" "%EDGE_PATH%" --remote-debugging-port=!PORT3! --user-data-dir="!USERDATA3!" --remote-allow-origins=* --disable-features=RendererCodeIntegrity
+    echo   Starting Account3 (port 9224)...
+    start "" "%EDGE_PATH%" --remote-debugging-port=9224 --user-data-dir="%TEMP%\chrome-fishing-9224" --remote-allow-origins=* --disable-features=RendererCodeIntegrity
     timeout /t 2 /nobreak >nul
 )
 
 REM Start Account 4
 if %accountCount% GEQ 4 (
     set /a PORT4=%BASE_PORT%+3
-    set USERDATA4=%TEMP%\chrome-fishing-!PORT4!
-    echo   Starting Account4 ^(port !PORT4!^)...
-    start "" "%EDGE_PATH%" --remote-debugging-port=!PORT4! --user-data-dir="!USERDATA4!" --remote-allow-origins=* --disable-features=RendererCodeIntegrity
+    echo   Starting Account4 (port 9225)...
+    start "" "%EDGE_PATH%" --remote-debugging-port=9225 --user-data-dir="%TEMP%\chrome-fishing-9225" --remote-allow-origins=* --disable-features=RendererCodeIntegrity
     timeout /t 2 /nobreak >nul
 )
 
 REM Start Account 5
 if %accountCount% GEQ 5 (
     set /a PORT5=%BASE_PORT%+4
-    set USERDATA5=%TEMP%\chrome-fishing-!PORT5!
-    echo   Starting Account5 ^(port !PORT5!^)...
-    start "" "%EDGE_PATH%" --remote-debugging-port=!PORT5! --user-data-dir="!USERDATA5!" --remote-allow-origins=* --disable-features=RendererCodeIntegrity
+    echo   Starting Account5 (port 9226)...
+    start "" "%EDGE_PATH%" --remote-debugging-port=9226 --user-data-dir="%TEMP%\chrome-fishing-9226" --remote-allow-origins=* --disable-features=RendererCodeIntegrity
     timeout /t 2 /nobreak >nul
 )
 
@@ -133,41 +128,36 @@ if not exist "%~dp0fishing0.5.py" (
 
 REM Start Account 1 script
 if %accountCount% GEQ 1 (
-    set /a PORT1=%BASE_PORT%+0
     echo   Starting Account1 fishing script...
-    start "Fishing Bot - Account1" cmd /k "python "%~dp0fishing0.5.py" --port !PORT1! --name Account1 --auto-bind"
+    start "Fishing Bot - Account1" cmd /k "python "%~dp0fishing0.5.py" --port 9222 --name Account1 --auto-bind"
     timeout /t 1 /nobreak >nul
 )
 
 REM Start Account 2 script
 if %accountCount% GEQ 2 (
-    set /a PORT2=%BASE_PORT%+1
     echo   Starting Account2 fishing script...
-    start "Fishing Bot - Account2" cmd /k "python "%~dp0fishing0.5.py" --port !PORT2! --name Account2 --auto-bind"
+    start "Fishing Bot - Account2" cmd /k "python "%~dp0fishing0.5.py" --port 9223 --name Account2 --auto-bind"
     timeout /t 1 /nobreak >nul
 )
 
 REM Start Account 3 script
 if %accountCount% GEQ 3 (
-    set /a PORT3=%BASE_PORT%+2
     echo   Starting Account3 fishing script...
-    start "Fishing Bot - Account3" cmd /k "python "%~dp0fishing0.5.py" --port !PORT3! --name Account3 --auto-bind"
+    start "Fishing Bot - Account3" cmd /k "python "%~dp0fishing0.5.py" --port 9224 --name Account3 --auto-bind"
     timeout /t 1 /nobreak >nul
 )
 
 REM Start Account 4 script
 if %accountCount% GEQ 4 (
-    set /a PORT4=%BASE_PORT%+3
     echo   Starting Account4 fishing script...
-    start "Fishing Bot - Account4" cmd /k "python "%~dp0fishing0.5.py" --port !PORT4! --name Account4 --auto-bind"
+    start "Fishing Bot - Account4" cmd /k "python "%~dp0fishing0.5.py" --port 9225 --name Account4 --auto-bind"
     timeout /t 1 /nobreak >nul
 )
 
 REM Start Account 5 script
 if %accountCount% GEQ 5 (
-    set /a PORT5=%BASE_PORT%+4
     echo   Starting Account5 fishing script...
-    start "Fishing Bot - Account5" cmd /k "python "%~dp0fishing0.5.py" --port !PORT5! --name Account5 --auto-bind"
+    start "Fishing Bot - Account5" cmd /k "python "%~dp0fishing0.5.py" --port 9226 --name Account5 --auto-bind"
     timeout /t 1 /nobreak >nul
 )
 
