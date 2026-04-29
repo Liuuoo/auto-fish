@@ -64,6 +64,7 @@ def start_browser(port, account_name):
         edge_path,
         f"--remote-debugging-port={port}",
         f"--user-data-dir={user_data_dir}",
+        "--remote-allow-origins=*",  # 允许 CDP 连接
         "--disable-features=RendererCodeIntegrity",
     ]
 
