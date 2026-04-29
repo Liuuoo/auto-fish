@@ -2013,7 +2013,7 @@ def main():
         if should_exit or TARGET_HWND is None:
             return
 
-    target = cdp_pick_target(window_title_hint=get_window_text(TARGET_HWND))
+    target = cdp_pick_target(window_title_hint=get_window_text(TARGET_HWND), host=CDP_HOST, port=CDP_PORT)
     if target is None:
         print("[终止] 未能获取 CDP target")
         return
