@@ -12,6 +12,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import winsound
+import argparse
 
 import cv2
 import numpy as np
@@ -1944,12 +1945,34 @@ def wait_with_preview(duration, red_lower, red_upper):
 
 # ---------- 主循环 ----------
 def main():
-    global should_exit, _cdp_target_cache
+    global should_exit, _cdp_target_cache, CDP_PORT, CDP_HOST, PREVIEW_WINDOW_NAME
 
-    print("=== 自动钓鱼脚本 0.5（CDP 注入版）===")
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(description='自动钓鱼脚本 - 支持多账号')
+    parser.add_argument('--port', type=int, default=9222, help='CDP 调试端口（默认 9222）')
+    parser.add_argument('--host', type=str, default='127.0.0.1', help='CDP 主机地址（默认 127.0.0.1）')
+    parser.add_argument('--name', type=str, default='', help='实例名称，用于区分不同账号')
+    args = parser.parse_args()
+
+    # 更新全局配置
+    CDP_PORT = args.port
+    CDP_HOST = args.host
+    instance_name = args.name
+
+    # 根据实例名称更新窗口标题
+    if instance_name:
+        PREVIEW_WINDOW_NAME = f"Fishing Preview - {instance_name}"
+    else:
+        PREVIEW_WINDOW_NAME = f"Fishing Preview - Port {CDP_PORT}"
+
+    print(f"=== 自动钓鱼脚本 0.5（CDP 注入版）===")
+    if instance_name:
+        print(f"实例名称: {instance_name}")
+    print(f"CDP 端口: {CDP_HOST}:{CDP_PORT}")
+    print()
     print("先决条件：")
-    print('  Chrome 启动时需带参数 --remote-debugging-port=9222')
-    print(r'  推荐： chrome.exe --remote-debugging-port=9222 --user-data-dir="%TEMP%\chrome-fishing"')
+    print(f'  Chrome 启动时需带参数 --remote-debugging-port={CDP_PORT}')
+    print(f'  推荐： chrome.exe --remote-debugging-port={CDP_PORT} --user-data-dir="%TEMP%\\chrome-fishing-{CDP_PORT}"')
     print("  pip install websocket-client")
     print()
     print("操作：F8 绑定窗口 → 选 tab → 拖框选区 → F7 启动/暂停 → ESC 停止/退出")
