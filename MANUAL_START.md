@@ -14,20 +14,36 @@ Get-Process msedge -ErrorAction SilentlyContinue | Stop-Process -Force
 
 ## 步骤3：启动浏览器
 
-### 启动账号1（端口 9222）
+**一次性复制以下所有命令，粘贴到 PowerShell 中：**
 
 ```powershell
-$edgePath = "C:\Program Files\Microsoft\Edge\Application\msedge.exe"
+# 关闭现有浏览器
+Get-Process msedge -ErrorAction SilentlyContinue | Stop-Process -Force
+
+# 等待2秒
+Start-Sleep -Seconds 2
+
+# 设置正确的 Edge 路径（根据你的系统调整）
+$edgePath = "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+
+# 启动账号1（端口 9222）
+Write-Host "Starting Account1 (port 9222)..." -ForegroundColor Green
 Start-Process -FilePath $edgePath -ArgumentList "--remote-debugging-port=9222","--user-data-dir=`"$env:TEMP\chrome-fishing-9222`"","--remote-allow-origins=*","--disable-features=RendererCodeIntegrity"
-```
 
-等待2秒，然后启动账号2：
+# 等待2秒
+Start-Sleep -Seconds 2
 
-### 启动账号2（端口 9223）
-
-```powershell
+# 启动账号2（端口 9223）
+Write-Host "Starting Account2 (port 9223)..." -ForegroundColor Green
 Start-Process -FilePath $edgePath -ArgumentList "--remote-debugging-port=9223","--user-data-dir=`"$env:TEMP\chrome-fishing-9223`"","--remote-allow-origins=*","--disable-features=RendererCodeIntegrity"
+
+Write-Host ""
+Write-Host "Browsers started! Please login to your accounts." -ForegroundColor Cyan
 ```
+
+**注意：** 如果上述命令提示找不到文件，请尝试以下路径之一：
+- `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`（32位版本）
+- `C:\Program Files\Microsoft\Edge\Application\msedge.exe`（64位版本）
 
 ## 步骤4：在浏览器中登录账号
 
