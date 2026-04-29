@@ -1979,8 +1979,8 @@ def main():
     print()
 
     if auto_bind:
-        print("=== [1/2] 自动绑定浏览器窗口 ===")
-        # 自动查找并绑定浏览器窗口
+        print("=== [1/2] 选择浏览器窗口 ===")
+        # 自动查找浏览器窗口
         windows = list_browser_windows()
         if not windows:
             print("[错误] 未检测到 Chrome/Edge 窗口")
@@ -1993,26 +1993,27 @@ def main():
             print(f"[自动绑定] 已绑定唯一的浏览器窗口")
             print(f"  HWND={TARGET_HWND:#x} | {windows[0][1][:80]}")
         else:
-            # 多个窗口，根据端口号按顺序绑定
+            # 多个窗口，让用户手动选择
             print(f"检测到 {len(windows)} 个浏览器窗口：")
             for i, (hwnd, title) in enumerate(windows):
                 print(f"  [{i}] HWND={hwnd:#x} | {title[:80]}")
 
-            # 根据端口号计算窗口索引
-            # 端口 9222 -> 索引 0 (第一个窗口)
-            # 端口 9223 -> 索引 1 (第二个窗口)
-            # 端口 9224 -> 索引 2 (第三个窗口)
-            window_index = CDP_PORT - 9222
+            print(f"\n提示：端口 {CDP_PORT} 建议选择对应的浏览器窗口")
+            print("请输入窗口编号 (0-%d): " % (len(windows) - 1), end='')
 
-            if 0 <= window_index < len(windows):
-                TARGET_HWND = windows[window_index][0]
-                print(f"\n[自动绑定] 根据端口 {CDP_PORT} 绑定第 {window_index + 1} 个窗口")
-                print(f"  HWND={TARGET_HWND:#x} | {windows[window_index][1][:80]}")
-            else:
-                # 如果索引超出范围，绑定第一个窗口
-                TARGET_HWND = windows[0][0]
-                print(f"\n[自动绑定] 端口 {CDP_PORT} 超出范围，绑定第一个窗口")
-                print(f"  HWND={TARGET_HWND:#x} | {windows[0][1][:80]}")
+            while True:
+                try:
+                    choice = input().strip()
+                    idx = int(choice)
+                    if 0 <= idx < len(windows):
+                        TARGET_HWND = windows[idx][0]
+                        print(f"\n[已选择] 窗口 {idx}")
+                        print(f"  HWND={TARGET_HWND:#x} | {windows[idx][1][:80]}")
+                        break
+                    else:
+                        print(f"请输入 0-{len(windows)-1} 之间的数字: ", end='')
+                except (ValueError, EOFError):
+                    print(f"请输入有效的数字 (0-{len(windows)-1}): ", end='')
         print()
     else:
         print("操作：F8 绑定窗口 → 选 tab → 拖框选区 → F7 启动/暂停 → ESC 停止/退出")
