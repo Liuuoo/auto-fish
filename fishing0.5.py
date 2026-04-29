@@ -1627,7 +1627,7 @@ def mouse_callback(event, x, y, flags, param):
 
 # ---------- 键盘监听 ----------
 def on_press(key):
-    global running, paused, should_exit, TARGET_HWND, CURRENT_ROD_SLOT, LAST_ROD_SLOTS, ROD_EXPECTED_DURABILITY, SELECTED_AUTH_ADDRESS
+    global running, paused, should_exit, TARGET_HWND, CURRENT_ROD_SLOT, LAST_ROD_SLOTS, ROD_EXPECTED_DURABILITY, SELECTED_AUTH_ADDRESS, CDP_PORT
 
     if key == keyboard.Key.f8:
         hwnd = user32.GetForegroundWindow()
@@ -1642,12 +1642,23 @@ def on_press(key):
         print(f"[F8] 已绑定 HWND={hwnd:#x} | {get_window_text(hwnd)[:80]}")
         return
 
-    if key == keyboard.Key.f7:
+    # 根据端口号分配不同的启动/暂停键
+    # 端口 9222 -> F7, 端口 9223 -> F8, 端口 9224 -> F9, 端口 9225 -> F10, 端口 9226 -> F11
+    start_key_map = {
+        9222: keyboard.Key.f7,
+        9223: keyboard.Key.f9,  # 改为 F9，避免与 F8 绑定窗口冲突
+        9224: keyboard.Key.f10,
+        9225: keyboard.Key.f11,
+        9226: keyboard.Key.f12,
+    }
+    assigned_start_key = start_key_map.get(CDP_PORT, keyboard.Key.f7)
+
+    if key == assigned_start_key:
         if TARGET_HWND is None:
-            print("[F7] 尚未绑定目标窗口（先按 F8）")
+            print(f"[{key}] 尚未绑定目标窗口（先按 F8）")
             return
         if _cdp_ws is None:
-            print("[F7] 尚未连接 CDP")
+            print(f"[{key}] 尚未连接 CDP")
             return
         if not running:
             running = True
@@ -1961,6 +1972,21 @@ def main():
     instance_name = args.name
     auto_bind = args.auto_bind
 
+    # 根据端口号分配快捷键
+    # 端口 9222 -> F7 (Account1)
+    # 端口 9223 -> F9 (Account2) - F8 用于绑定窗口
+    # 端口 9224 -> F10 (Account3)
+    # 端口 9225 -> F11 (Account4)
+    # 端口 9226 -> F12 (Account5)
+    hotkey_map = {
+        9222: 'F7',
+        9223: 'F9',
+        9224: 'F10',
+        9225: 'F11',
+        9226: 'F12',
+    }
+    assigned_hotkey = hotkey_map.get(CDP_PORT, 'F7')
+
     # 根据实例名称更新窗口标题
     if instance_name:
         PREVIEW_WINDOW_NAME = f"Fishing Preview - {instance_name}"
@@ -1971,6 +1997,7 @@ def main():
     if instance_name:
         print(f"实例名称: {instance_name}")
     print(f"CDP 端口: {CDP_HOST}:{CDP_PORT}")
+    print(f"快捷键: {assigned_hotkey} 启动/暂停")
     print()
     print("先决条件：")
     print(f'  Chrome 启动时需带参数 --remote-debugging-port={CDP_PORT}')
