@@ -95,6 +95,7 @@ def start_fishing_bot(port, account_name):
         str(script_path),
         "--port", str(port),
         "--name", account_name,
+        "--auto-bind",  # 启用自动绑定
     ]
 
     try:

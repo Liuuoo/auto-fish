@@ -1945,19 +1945,21 @@ def wait_with_preview(duration, red_lower, red_upper):
 
 # ---------- 主循环 ----------
 def main():
-    global should_exit, _cdp_target_cache, CDP_PORT, CDP_HOST, PREVIEW_WINDOW_NAME
+    global should_exit, _cdp_target_cache, CDP_PORT, CDP_HOST, PREVIEW_WINDOW_NAME, TARGET_HWND
 
     # 解析命令行参数
     parser = argparse.ArgumentParser(description='自动钓鱼脚本 - 支持多账号')
     parser.add_argument('--port', type=int, default=9222, help='CDP 调试端口（默认 9222）')
     parser.add_argument('--host', type=str, default='127.0.0.1', help='CDP 主机地址（默认 127.0.0.1）')
     parser.add_argument('--name', type=str, default='', help='实例名称，用于区分不同账号')
+    parser.add_argument('--auto-bind', action='store_true', help='自动绑定浏览器窗口，不需要按 F8')
     args = parser.parse_args()
 
     # 更新全局配置
     CDP_PORT = args.port
     CDP_HOST = args.host
     instance_name = args.name
+    auto_bind = args.auto_bind
 
     # 根据实例名称更新窗口标题
     if instance_name:
@@ -1975,13 +1977,41 @@ def main():
     print(f'  推荐： chrome.exe --remote-debugging-port={CDP_PORT} --user-data-dir="%TEMP%\\chrome-fishing-{CDP_PORT}"')
     print("  pip install websocket-client")
     print()
-    print("操作：F8 绑定窗口 → 选 tab → 拖框选区 → F7 启动/暂停 → ESC 停止/退出")
-    print("提示：浏览器窗口可被遮挡；但目标 tab 应保持 active，否则 Chrome 会 throttle JS")
-    print()
 
-    pick_target_window()
-    if should_exit or TARGET_HWND is None:
-        return
+    if auto_bind:
+        print("=== [1/2] 自动绑定浏览器窗口 ===")
+        # 自动查找并绑定浏览器窗口
+        windows = list_browser_windows()
+        if not windows:
+            print("[错误] 未检测到 Chrome/Edge 窗口")
+            print("请先启动浏览器，然后重新运行脚本")
+            return
+
+        # 如果只有一个窗口，直接绑定
+        if len(windows) == 1:
+            TARGET_HWND = windows[0][0]
+            print(f"[自动绑定] 已绑定唯一的浏览器窗口")
+            print(f"  HWND={TARGET_HWND:#x} | {windows[0][1][:80]}")
+        else:
+            # 多个窗口，尝试根据端口匹配
+            print(f"检测到 {len(windows)} 个浏览器窗口：")
+            for i, (hwnd, title) in enumerate(windows):
+                print(f"  [{i}] HWND={hwnd:#x} | {title[:80]}")
+
+            # 默认选择第一个
+            TARGET_HWND = windows[0][0]
+            print(f"\n[自动绑定] 已绑定第一个浏览器窗口")
+            print(f"  HWND={TARGET_HWND:#x} | {windows[0][1][:80]}")
+        print()
+    else:
+        print("操作：F8 绑定窗口 → 选 tab → 拖框选区 → F7 启动/暂停 → ESC 停止/退出")
+        print("提示：浏览器窗口可被遮挡；但目标 tab 应保持 active，否则 Chrome 会 throttle JS")
+        print()
+
+        # 手动绑定模式
+        pick_target_window()
+        if should_exit or TARGET_HWND is None:
+            return
 
     target = cdp_pick_target(window_title_hint=get_window_text(TARGET_HWND))
     if target is None:
