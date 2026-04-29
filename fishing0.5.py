@@ -1993,15 +1993,26 @@ def main():
             print(f"[自动绑定] 已绑定唯一的浏览器窗口")
             print(f"  HWND={TARGET_HWND:#x} | {windows[0][1][:80]}")
         else:
-            # 多个窗口，尝试根据端口匹配
+            # 多个窗口，根据端口号按顺序绑定
             print(f"检测到 {len(windows)} 个浏览器窗口：")
             for i, (hwnd, title) in enumerate(windows):
                 print(f"  [{i}] HWND={hwnd:#x} | {title[:80]}")
 
-            # 默认选择第一个
-            TARGET_HWND = windows[0][0]
-            print(f"\n[自动绑定] 已绑定第一个浏览器窗口")
-            print(f"  HWND={TARGET_HWND:#x} | {windows[0][1][:80]}")
+            # 根据端口号计算窗口索引
+            # 端口 9222 -> 索引 0 (第一个窗口)
+            # 端口 9223 -> 索引 1 (第二个窗口)
+            # 端口 9224 -> 索引 2 (第三个窗口)
+            window_index = CDP_PORT - 9222
+
+            if 0 <= window_index < len(windows):
+                TARGET_HWND = windows[window_index][0]
+                print(f"\n[自动绑定] 根据端口 {CDP_PORT} 绑定第 {window_index + 1} 个窗口")
+                print(f"  HWND={TARGET_HWND:#x} | {windows[window_index][1][:80]}")
+            else:
+                # 如果索引超出范围，绑定第一个窗口
+                TARGET_HWND = windows[0][0]
+                print(f"\n[自动绑定] 端口 {CDP_PORT} 超出范围，绑定第一个窗口")
+                print(f"  HWND={TARGET_HWND:#x} | {windows[0][1][:80]}")
         print()
     else:
         print("操作：F8 绑定窗口 → 选 tab → 拖框选区 → F7 启动/暂停 → ESC 停止/退出")
