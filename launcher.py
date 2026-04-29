@@ -89,28 +89,31 @@ def start_fishing_bot(port, account_name):
         print(f"❌ [{account_name}] 未找到 fishing0.5.py")
         return None
 
-    # 启动钓鱼脚本进程
-    args = [
-        sys.executable,
-        str(script_path),
-        "--port", str(port),
-        "--name", account_name,
-        "--auto-bind",  # 启用自动绑定
-    ]
+    # 构建命令
+    cmd = f'python "{script_path}" --port {port} --name {account_name} --auto-bind'
 
     try:
         # 在新的命令行窗口中启动
         if sys.platform == "win32":
-            process = subprocess.Popen(
-                ["cmd", "/c", "start", f"Fishing Bot - {account_name}",
-                 "cmd", "/k"] + args,
+            # 使用 start 命令在新窗口中运行
+            subprocess.Popen(
+                f'start "Fishing Bot - {account_name}" cmd /k {cmd}',
+                shell=True,
                 creationflags=subprocess.CREATE_NEW_CONSOLE
             )
         else:
-            process = subprocess.Popen(args)
+            args = [
+                sys.executable,
+                str(script_path),
+                "--port", str(port),
+                "--name", account_name,
+                "--auto-bind",
+            ]
+            subprocess.Popen(args)
 
         print(f"✅ [{account_name}] 钓鱼脚本已启动")
-        return process
+        print(f"   命令: {cmd}")
+        return True
     except Exception as e:
         print(f"❌ [{account_name}] 启动钓鱼脚本失败: {e}")
         return None
