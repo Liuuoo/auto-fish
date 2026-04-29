@@ -37,6 +37,15 @@ except Exception:
     ApiSatWorldClient = None
     _WORK_API_AVAILABLE = False
 
+# 导入装备制作模块
+try:
+    from modules.crafting import CraftingManager
+    _CRAFTING_AVAILABLE = True
+except Exception as e:
+    CraftingManager = None
+    _CRAFTING_AVAILABLE = False
+    print(f"[警告] 装备制作模块导入失败: {e}")
+
 
 # ---------- DPI 感知 ----------
 try:
@@ -121,6 +130,10 @@ SELECTED_AUTH_ADDRESS = None
 _cdp_ws = None
 _cdp_msg_id = 0
 _cdp_lock = threading.Lock()
+
+# 装备制作相关
+crafting_manager = None
+crafting_task = None
 
 
 # ---------- Win32 封装 ----------
@@ -1025,6 +1038,81 @@ def cdp_send_key(key_def, printable=False):
     return send(up_params)
 
 
+# ---------- 装备制作相关函数 ----------
+async def cdp_send_async(method, params=None):
+    """异步CDP发送函数,用于装备制作模块"""
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, _cdp_call, method, params)
+    return result
+
+
+async def send_key_async(key_def):
+    """异步发送按键函数,用于装备制作模块"""
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, cdp_send_key, key_def, False)
+    return result
+
+
+def init_crafting_manager():
+    """初始化装备制作管理器"""
+    global crafting_manager
+    if not _CRAFTING_AVAILABLE:
+        print("[制作] 装备制作模块不可用")
+        return False
+
+    crafting_manager = CraftingManager(cdp_send_async, send_key_async)
+    print("[制作] 装备制作管理器已初始化")
+    return True
+
+
+def start_crafting_with_input():
+    """启动装备制作流程(带用户输入)"""
+    global crafting_task, paused, running
+
+    if not _CRAFTING_AVAILABLE or crafting_manager is None:
+        print("[制作] 装备制作功能不可用")
+        return
+
+    if crafting_task is not None and not crafting_task.done():
+        print("[制作] 已有制作任务正在进行中")
+        return
+
+    # 暂停钓鱼
+    if running:
+        paused = True
+        print("[制作] 已暂停钓鱼")
+
+    # 获取用户输入
+    try:
+        count_str = input("[制作] 请输入要制作的数量: ")
+        count = int(count_str)
+        if count <= 0:
+            print("[制作] 数量必须大于0")
+            return
+
+        print(f"[制作] 开始制作 {count} 个装备...")
+
+        # 创建异步任务
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        crafting_task = loop.create_task(crafting_manager.start_crafting(count))
+
+        # 运行任务
+        loop.run_until_complete(crafting_task)
+        loop.close()
+
+        print("[制作] 制作流程已完成")
+
+    except ValueError:
+        print("[制作] 输入无效,请输入数字")
+    except KeyboardInterrupt:
+        print("[制作] 制作已取消")
+        if crafting_manager:
+            crafting_manager.stop_crafting()
+    except Exception as e:
+        print(f"[制作] 发生错误: {e}")
+
+
 def _extract_user_item_pack(api_payload):
     body = api_payload.get("body") if isinstance(api_payload, dict) else None
     data = body.get("data") if isinstance(body, dict) else None
@@ -1648,8 +1736,30 @@ def on_press(key):
         print(f"[F8] 已绑定 HWND={hwnd:#x} | {get_window_text(hwnd)[:80]}")
         return
 
+    # 根据端口号分配装备制作快捷键
+    # 端口 9222 -> F1, 端口 9223 -> F2, 端口 9224 -> F3, 端口 9225 -> F4, 端口 9226 -> F5
+    craft_key_map = {
+        9222: keyboard.Key.f1,
+        9223: keyboard.Key.f2,
+        9224: keyboard.Key.f3,
+        9225: keyboard.Key.f4,
+        9226: keyboard.Key.f5,
+    }
+    assigned_craft_key = craft_key_map.get(CDP_PORT)
+
+    if assigned_craft_key and key == assigned_craft_key:
+        if TARGET_HWND is None:
+            print(f"[{key}] 尚未绑定目标窗口（先按 F8）")
+            return
+        if _cdp_ws is None:
+            print(f"[{key}] 尚未连接 CDP")
+            return
+        # 启动装备制作流程
+        threading.Thread(target=start_crafting_with_input, daemon=True).start()
+        return
+
     # 根据端口号分配不同的启动/暂停键
-    # 端口 9222 -> F7, 端口 9223 -> F8, 端口 9224 -> F9, 端口 9225 -> F10, 端口 9226 -> F11
+    # 端口 9222 -> F7, 端口 9223 -> F9, 端口 9224 -> F10, 端口 9225 -> F11, 端口 9226 -> F12
     start_key_map = {
         9222: keyboard.Key.f7,
         9223: keyboard.Key.f9,  # 改为 F9，避免与 F8 绑定窗口冲突
@@ -1993,6 +2103,16 @@ def main():
     }
     assigned_hotkey = hotkey_map.get(CDP_PORT, 'F7')
 
+    # 装备制作快捷键
+    craft_hotkey_map = {
+        9222: 'F1',
+        9223: 'F2',
+        9224: 'F3',
+        9225: 'F4',
+        9226: 'F5',
+    }
+    assigned_craft_hotkey = craft_hotkey_map.get(CDP_PORT, 'F1')
+
     # 根据实例名称更新窗口标题
     if instance_name:
         PREVIEW_WINDOW_NAME = f"Fishing Preview - {instance_name}"
@@ -2003,7 +2123,8 @@ def main():
     if instance_name:
         print(f"实例名称: {instance_name}")
     print(f"CDP 端口: {CDP_HOST}:{CDP_PORT}")
-    print(f"快捷键: {assigned_hotkey} 启动/暂停")
+    print(f"快捷键: {assigned_hotkey} 启动/暂停钓鱼")
+    print(f"快捷键: {assigned_craft_hotkey} 装备制作")
     print()
     print("先决条件：")
     print(f'  Chrome 启动时需带参数 --remote-debugging-port={CDP_PORT}')
@@ -2068,6 +2189,10 @@ def main():
     except Exception as e:
         print(f"[终止] CDP 连接失败：{e}")
         return
+
+    # 初始化装备制作管理器
+    if _CRAFTING_AVAILABLE:
+        init_crafting_manager()
 
     red_lower = np.array([0, 0, 100])
     red_upper = np.array([80, 80, 255])
