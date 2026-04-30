@@ -678,6 +678,8 @@ def cdp_focus_game_canvas():
 def _airdrop_file_candidates(filename):
     base_dir = Path(__file__).resolve().parent
     candidates = [
+        Path.cwd() / "signatures" / filename,
+        base_dir / "signatures" / filename,
         Path.cwd() / filename,
         base_dir / filename,
         base_dir.parent / filename,
@@ -686,6 +688,7 @@ def _airdrop_file_candidates(filename):
     if getattr(sys, "frozen", False):
         exe_dir = Path(sys.executable).resolve().parent
         candidates.extend([
+            exe_dir / "signatures" / filename,
             exe_dir / filename,
             exe_dir.parent / filename,
             exe_dir.parent.parent / filename,
