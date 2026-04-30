@@ -36,6 +36,15 @@ except Exception:
     ApiSatWorldClient = None
     _WORK_API_AVAILABLE = False
 
+# 导入装备制作模块
+try:
+    from modules.crafting import CraftingManager
+    _CRAFTING_AVAILABLE = True
+except Exception as e:
+    CraftingManager = None
+    _CRAFTING_AVAILABLE = False
+    print(f"[警告] 装备制作模块导入失败: {e}")
+
 
 # ---------- DPI 感知 ----------
 try:
@@ -120,6 +129,10 @@ SELECTED_AUTH_ADDRESS = None
 _cdp_ws = None
 _cdp_msg_id = 0
 _cdp_lock = threading.Lock()
+
+# 装备制作相关
+crafting_manager = None
+crafting_task = None
 
 
 # ---------- Win32 封装 ----------
@@ -1018,6 +1031,81 @@ def cdp_send_key(key_def, printable=False):
     return send(up_params)
 
 
+# ---------- 装备制作相关函数 ----------
+async def cdp_send_async(method, params=None):
+    """异步CDP发送函数,用于装备制作模块"""
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, _cdp_call, method, params)
+    return result
+
+
+async def send_key_async(key_def):
+    """异步发送按键函数,用于装备制作模块"""
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, cdp_send_key, key_def, False)
+    return result
+
+
+def init_crafting_manager():
+    """初始化装备制作管理器"""
+    global crafting_manager
+    if not _CRAFTING_AVAILABLE:
+        print("[制作] 装备制作模块不可用")
+        return False
+
+    crafting_manager = CraftingManager(cdp_send_async, send_key_async)
+    print("[制作] 装备制作管理器已初始化")
+    return True
+
+
+def start_crafting_with_input():
+    """启动装备制作流程(带用户输入)"""
+    global crafting_task, paused, running
+
+    if not _CRAFTING_AVAILABLE or crafting_manager is None:
+        print("[制作] 装备制作功能不可用")
+        return
+
+    if crafting_task is not None and not crafting_task.done():
+        print("[制作] 已有制作任务正在进行中")
+        return
+
+    # 暂停钓鱼
+    if running:
+        paused = True
+        print("[制作] 已暂停钓鱼")
+
+    # 获取用户输入
+    try:
+        count_str = input("[制作] 请输入要制作的数量: ")
+        count = int(count_str)
+        if count <= 0:
+            print("[制作] 数量必须大于0")
+            return
+
+        print(f"[制作] 开始制作 {count} 个装备...")
+
+        # 创建异步任务
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        crafting_task = loop.create_task(crafting_manager.start_crafting(count))
+
+        # 运行任务
+        loop.run_until_complete(crafting_task)
+        loop.close()
+
+        print("[制作] 制作流程已完成")
+
+    except ValueError:
+        print("[制作] 输入无效,请输入数字")
+    except KeyboardInterrupt:
+        print("[制作] 制作已取消")
+        if crafting_manager:
+            crafting_manager.stop_crafting()
+    except Exception as e:
+        print(f"[制作] 发生错误: {e}")
+
+
 def _extract_user_item_pack(api_payload):
     body = api_payload.get("body") if isinstance(api_payload, dict) else None
     data = body.get("data") if isinstance(body, dict) else None
@@ -1641,6 +1729,17 @@ def on_press(key):
         print(f"[F8] 已绑定 HWND={hwnd:#x} | {get_window_text(hwnd)[:80]}")
         return
 
+    if key == keyboard.Key.f1:
+        if TARGET_HWND is None:
+            print("[F1] 尚未绑定目标窗口（先按 F8）")
+            return
+        if _cdp_ws is None:
+            print("[F1] 尚未连接 CDP")
+            return
+        # 启动装备制作流程
+        threading.Thread(target=start_crafting_with_input, daemon=True).start()
+        return
+
     if key == keyboard.Key.f7:
         if TARGET_HWND is None:
             print("[F7] 尚未绑定目标窗口（先按 F8）")
@@ -1944,12 +2043,16 @@ def wait_with_preview(duration, red_lower, red_upper):
 
 # ---------- 主循环 ----------
 def main():
-    global should_exit, _cdp_target_cache
+    global should_exit, _cdp_target_cache, PREVIEW_WINDOW_NAME, TARGET_HWND
 
     print("=== 自动钓鱼脚本 0.5（CDP 注入版）===")
+    print(f"CDP 端口: {CDP_HOST}:{CDP_PORT}")
+    print("快捷键: F7 启动/暂停钓鱼")
+    print("快捷键: F1 装备制作")
+    print()
     print("先决条件：")
-    print('  Chrome 启动时需带参数 --remote-debugging-port=9222')
-    print(r'  推荐： chrome.exe --remote-debugging-port=9222 --user-data-dir="%TEMP%\chrome-fishing"')
+    print(f'  Chrome 启动时需带参数 --remote-debugging-port={CDP_PORT}')
+    print(f'  推荐： chrome.exe --remote-debugging-port={CDP_PORT} --user-data-dir="%TEMP%\\chrome-fishing"')
     print("  pip install websocket-client")
     print()
     print("操作：F8 绑定窗口 → 选 tab → 拖框选区 → F7 启动/暂停 → ESC 停止/退出")
@@ -1960,7 +2063,7 @@ def main():
     if should_exit or TARGET_HWND is None:
         return
 
-    target = cdp_pick_target(window_title_hint=get_window_text(TARGET_HWND))
+    target = cdp_pick_target(window_title_hint=get_window_text(TARGET_HWND), host=CDP_HOST, port=CDP_PORT)
     if target is None:
         print("[终止] 未能获取 CDP target")
         return
@@ -1970,6 +2073,10 @@ def main():
     except Exception as e:
         print(f"[终止] CDP 连接失败：{e}")
         return
+
+    # 初始化装备制作管理器
+    if _CRAFTING_AVAILABLE:
+        init_crafting_manager()
 
     red_lower = np.array([0, 0, 100])
     red_upper = np.array([80, 80, 255])
