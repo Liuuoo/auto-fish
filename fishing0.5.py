@@ -12,7 +12,6 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import winsound
-import argparse
 
 import cv2
 import numpy as np
@@ -992,23 +991,17 @@ def beep_once():
 
 
 def pause_for_hidden_airdrop():
-    global paused, CDP_PORT
+    global paused
     beep_once()
     paused = True
-    # 根据端口号显示正确的快捷键
-    hotkey_map = {9222: 'F7', 9223: 'F9', 9224: 'F10', 9225: 'F11', 9226: 'F12'}
-    hotkey = hotkey_map.get(CDP_PORT, 'F7')
-    print(f"[空投] 发现大空投，请手动处理任务；脚本已暂停，处理完成后按 {hotkey} 继续")
+    print("[空投] 发现大空投，请手动处理任务；脚本已暂停，处理完成后按 F7 继续")
 
 
 def pause_for_no_energy():
-    global paused, CDP_PORT
+    global paused
     beep_once()
     paused = True
-    # 根据端口号显示正确的快捷键
-    hotkey_map = {9222: 'F7', 9223: 'F9', 9224: 'F10', 9225: 'F11', 9226: 'F12'}
-    hotkey = hotkey_map.get(CDP_PORT, 'F7')
-    print(f"[体力] 检测到无体力，已点击 Buy Energy；脚本已暂停，处理完成后按 {hotkey} 继续")
+    print("[体力] 检测到无体力，已点击 Buy Energy；脚本已暂停，处理完成后按 F7 继续")
 
 
 def cdp_send_key(key_def, printable=False):
@@ -1721,7 +1714,7 @@ def mouse_callback(event, x, y, flags, param):
 
 # ---------- 键盘监听 ----------
 def on_press(key):
-    global running, paused, should_exit, TARGET_HWND, CURRENT_ROD_SLOT, LAST_ROD_SLOTS, ROD_EXPECTED_DURABILITY, SELECTED_AUTH_ADDRESS, CDP_PORT
+    global running, paused, should_exit, TARGET_HWND, CURRENT_ROD_SLOT, LAST_ROD_SLOTS, ROD_EXPECTED_DURABILITY, SELECTED_AUTH_ADDRESS
 
     if key == keyboard.Key.f8:
         hwnd = user32.GetForegroundWindow()
@@ -1736,45 +1729,23 @@ def on_press(key):
         print(f"[F8] 已绑定 HWND={hwnd:#x} | {get_window_text(hwnd)[:80]}")
         return
 
-    # 根据端口号分配装备制作快捷键
-    # 端口 9222 -> F1, 端口 9223 -> F2, 端口 9224 -> F3, 端口 9225 -> F4, 端口 9226 -> F5
-    craft_key_map = {
-        9222: keyboard.Key.f1,
-        9223: keyboard.Key.f2,
-        9224: keyboard.Key.f3,
-        9225: keyboard.Key.f4,
-        9226: keyboard.Key.f5,
-    }
-    assigned_craft_key = craft_key_map.get(CDP_PORT)
-
-    if assigned_craft_key and key == assigned_craft_key:
+    if key == keyboard.Key.f1:
         if TARGET_HWND is None:
-            print(f"[{key}] 尚未绑定目标窗口（先按 F8）")
+            print("[F1] 尚未绑定目标窗口（先按 F8）")
             return
         if _cdp_ws is None:
-            print(f"[{key}] 尚未连接 CDP")
+            print("[F1] 尚未连接 CDP")
             return
         # 启动装备制作流程
         threading.Thread(target=start_crafting_with_input, daemon=True).start()
         return
 
-    # 根据端口号分配不同的启动/暂停键
-    # 端口 9222 -> F7, 端口 9223 -> F9, 端口 9224 -> F10, 端口 9225 -> F11, 端口 9226 -> F12
-    start_key_map = {
-        9222: keyboard.Key.f7,
-        9223: keyboard.Key.f9,  # 改为 F9，避免与 F8 绑定窗口冲突
-        9224: keyboard.Key.f10,
-        9225: keyboard.Key.f11,
-        9226: keyboard.Key.f12,
-    }
-    assigned_start_key = start_key_map.get(CDP_PORT, keyboard.Key.f7)
-
-    if key == assigned_start_key:
+    if key == keyboard.Key.f7:
         if TARGET_HWND is None:
-            print(f"[{key}] 尚未绑定目标窗口（先按 F8）")
+            print("[F7] 尚未绑定目标窗口（先按 F8）")
             return
         if _cdp_ws is None:
-            print(f"[{key}] 尚未连接 CDP")
+            print("[F7] 尚未连接 CDP")
             return
         if not running:
             running = True
@@ -2072,112 +2043,25 @@ def wait_with_preview(duration, red_lower, red_upper):
 
 # ---------- 主循环 ----------
 def main():
-    global should_exit, _cdp_target_cache, CDP_PORT, CDP_HOST, PREVIEW_WINDOW_NAME, TARGET_HWND
+    global should_exit, _cdp_target_cache, PREVIEW_WINDOW_NAME, TARGET_HWND
 
-    # 解析命令行参数
-    parser = argparse.ArgumentParser(description='自动钓鱼脚本 - 支持多账号')
-    parser.add_argument('--port', type=int, default=9222, help='CDP 调试端口（默认 9222）')
-    parser.add_argument('--host', type=str, default='127.0.0.1', help='CDP 主机地址（默认 127.0.0.1）')
-    parser.add_argument('--name', type=str, default='', help='实例名称，用于区分不同账号')
-    parser.add_argument('--auto-bind', action='store_true', help='自动绑定浏览器窗口，不需要按 F8')
-    args = parser.parse_args()
-
-    # 更新全局配置
-    CDP_PORT = args.port
-    CDP_HOST = args.host
-    instance_name = args.name
-    auto_bind = args.auto_bind
-
-    # 根据端口号分配快捷键
-    # 端口 9222 -> F7 (Account1)
-    # 端口 9223 -> F9 (Account2) - F8 用于绑定窗口
-    # 端口 9224 -> F10 (Account3)
-    # 端口 9225 -> F11 (Account4)
-    # 端口 9226 -> F12 (Account5)
-    hotkey_map = {
-        9222: 'F7',
-        9223: 'F9',
-        9224: 'F10',
-        9225: 'F11',
-        9226: 'F12',
-    }
-    assigned_hotkey = hotkey_map.get(CDP_PORT, 'F7')
-
-    # 装备制作快捷键
-    craft_hotkey_map = {
-        9222: 'F1',
-        9223: 'F2',
-        9224: 'F3',
-        9225: 'F4',
-        9226: 'F5',
-    }
-    assigned_craft_hotkey = craft_hotkey_map.get(CDP_PORT, 'F1')
-
-    # 根据实例名称更新窗口标题
-    if instance_name:
-        PREVIEW_WINDOW_NAME = f"Fishing Preview - {instance_name}"
-    else:
-        PREVIEW_WINDOW_NAME = f"Fishing Preview - Port {CDP_PORT}"
-
-    print(f"=== 自动钓鱼脚本 0.5（CDP 注入版）===")
-    if instance_name:
-        print(f"实例名称: {instance_name}")
+    print("=== 自动钓鱼脚本 0.5（CDP 注入版）===")
     print(f"CDP 端口: {CDP_HOST}:{CDP_PORT}")
-    print(f"快捷键: {assigned_hotkey} 启动/暂停钓鱼")
-    print(f"快捷键: {assigned_craft_hotkey} 装备制作")
+    print("快捷键: F7 启动/暂停钓鱼")
+    print("快捷键: F1 装备制作")
     print()
     print("先决条件：")
     print(f'  Chrome 启动时需带参数 --remote-debugging-port={CDP_PORT}')
-    print(f'  推荐： chrome.exe --remote-debugging-port={CDP_PORT} --user-data-dir="%TEMP%\\chrome-fishing-{CDP_PORT}"')
+    print(f'  推荐： chrome.exe --remote-debugging-port={CDP_PORT} --user-data-dir="%TEMP%\\chrome-fishing"')
     print("  pip install websocket-client")
     print()
+    print("操作：F8 绑定窗口 → 选 tab → 拖框选区 → F7 启动/暂停 → ESC 停止/退出")
+    print("提示：浏览器窗口可被遮挡；但目标 tab 应保持 active，否则 Chrome 会 throttle JS")
+    print()
 
-    if auto_bind:
-        print("=== [1/2] 选择浏览器窗口 ===")
-        # 自动查找浏览器窗口
-        windows = list_browser_windows()
-        if not windows:
-            print("[错误] 未检测到 Chrome/Edge 窗口")
-            print("请先启动浏览器，然后重新运行脚本")
-            return
-
-        # 如果只有一个窗口，直接绑定
-        if len(windows) == 1:
-            TARGET_HWND = windows[0][0]
-            print(f"[自动绑定] 已绑定唯一的浏览器窗口")
-            print(f"  HWND={TARGET_HWND:#x} | {windows[0][1][:80]}")
-        else:
-            # 多个窗口，让用户手动选择
-            print(f"检测到 {len(windows)} 个浏览器窗口：")
-            for i, (hwnd, title) in enumerate(windows):
-                print(f"  [{i}] HWND={hwnd:#x} | {title[:80]}")
-
-            print(f"\n提示：端口 {CDP_PORT} 建议选择对应的浏览器窗口")
-            print("请输入窗口编号 (0-%d): " % (len(windows) - 1), end='')
-
-            while True:
-                try:
-                    choice = input().strip()
-                    idx = int(choice)
-                    if 0 <= idx < len(windows):
-                        TARGET_HWND = windows[idx][0]
-                        print(f"\n[已选择] 窗口 {idx}")
-                        print(f"  HWND={TARGET_HWND:#x} | {windows[idx][1][:80]}")
-                        break
-                    else:
-                        print(f"请输入 0-{len(windows)-1} 之间的数字: ", end='')
-                except (ValueError, EOFError):
-                    print(f"请输入有效的数字 (0-{len(windows)-1}): ", end='')
-        print()
-    else:
-        print("操作：F8 绑定窗口 → 选 tab → 拖框选区 → F7 启动/暂停 → ESC 停止/退出")
-        print("提示：浏览器窗口可被遮挡；但目标 tab 应保持 active，否则 Chrome 会 throttle JS")
-        print()
-
-        # 手动绑定模式
-        pick_target_window()
-        if should_exit or TARGET_HWND is None:
-            return
+    pick_target_window()
+    if should_exit or TARGET_HWND is None:
+        return
 
     target = cdp_pick_target(window_title_hint=get_window_text(TARGET_HWND), host=CDP_HOST, port=CDP_PORT)
     if target is None:
