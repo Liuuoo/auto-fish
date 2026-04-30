@@ -65,7 +65,7 @@ Write-Host ""
 # Step 3: Start browser with debugging port
 Write-Host "[3/4] Starting browser with debugging port..." -ForegroundColor Yellow
 $port = 9222
-$userDataDir = "$env:TEMP\chrome-fishing"
+$userDataDir = "$env:TEMP\chrome-fishing-9222"
 
 $arguments = @(
     "--remote-debugging-port=$port",
