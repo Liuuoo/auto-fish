@@ -1659,6 +1659,9 @@ def record_successful_reel(defer_zero_switch=False):
     if ROD_EXPECTED_DURABILITY <= 0:
         if defer_zero_switch:
             return True
+        # 等待1秒让游戏的杆子消失动画播放完成
+        print("[鱼竿] 等待杆子消失动画...")
+        time.sleep(1.0)
         return ensure_usable_rod("耐久计数归零校准")
     return True
 
