@@ -1742,6 +1742,11 @@ def on_press(key):
         if _cdp_ws is None:
             print("[F1] 尚未连接 CDP")
             return
+        # 如果正在制作，则停止
+        if crafting_manager is not None and crafting_manager.is_crafting:
+            crafting_manager.stop_crafting()
+            print("[F1] 已停止装备制作")
+            return
         # 启动装备制作流程
         threading.Thread(target=start_crafting_with_input, daemon=True).start()
         return

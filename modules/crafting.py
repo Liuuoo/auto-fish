@@ -19,7 +19,7 @@ class CraftingManager:
     # 时间间隔常量
     OPEN_CRAFTING_DELAY = 0.5  # 打开制作台后的延迟(秒)
     STEP_DELAY = 0.5  # 每步操作之间的延迟(秒)
-    CRAFTING_COOLDOWN = 7.0  # 制作冷却时间(秒)
+    CRAFTING_COOLDOWN = 8.0  # 制作冷却时间(秒)
     WAIT_CRAFTING_OPEN_TIMEOUT = 5.0  # 等待制作台打开的超时时间(秒)
     WAIT_CRAFTING_OPEN_INTERVAL = 0.2  # 等待制作台打开的检查间隔(秒)
 
