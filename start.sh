@@ -78,7 +78,7 @@ echo ""
 echo -e "${YELLOW}[3/4] Starting browser with debugging port...${NC}"
 
 PORT=9222
-USER_DATA_DIR="$TMPDIR/chrome-fishing-9222"
+USER_DATA_DIR="$HOME/.chrome-fishing-9222"
 
 # Ensure profile directory exists (persistent — keeps login session)
 mkdir -p "$USER_DATA_DIR"
