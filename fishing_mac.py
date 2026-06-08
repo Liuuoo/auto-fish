@@ -2085,17 +2085,32 @@ def on_press(key):
 
     try:
         if key == keyboard.Key.f8:
-            # 绑定当前前台浏览器窗口
+            # 列出所有浏览器窗口，F8 循环切换绑定
             windows = list_browser_windows()
-            if windows:
-                # 选第一个 Chrome 窗口（通常就是刚启动的那个）
+            if not windows:
+                print("\n[F8] 未检测到浏览器窗口")
+            elif len(windows) == 1:
                 wid, name, winfo = windows[0]
                 TARGET_WINDOW_ID = wid
                 TARGET_WINDOW_INFO = winfo
                 print(f"\n[F8] 已绑定窗口: {name[:80]}")
                 play_sound_async()
             else:
-                print("\n[F8] 未检测到浏览器窗口")
+                # 多个窗口：首次 F8 绑定第一个，再按 F8 循环到下一个
+                current_idx = 0
+                for i, (wid, _, _) in enumerate(windows):
+                    if wid == TARGET_WINDOW_ID:
+                        current_idx = i
+                        break
+                next_idx = (current_idx + 1) % len(windows) if TARGET_WINDOW_ID else 0
+                wid, name, winfo = windows[next_idx]
+                TARGET_WINDOW_ID = wid
+                TARGET_WINDOW_INFO = winfo
+                print(f"\n[F8] 窗口 [{next_idx}/{len(windows)-1}]: {name[:80]}")
+                for i, (w, n, _) in enumerate(windows):
+                    marker = " <--" if w == wid else ""
+                    print(f"  [{i}] {n[:80]}{marker}")
+                play_sound_async()
         elif key == keyboard.Key.f7:
             if TARGET_WINDOW_ID is None:
                 print("\n[F7] 请先按 F8 绑定浏览器窗口")
